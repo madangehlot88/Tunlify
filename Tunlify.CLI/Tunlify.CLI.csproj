@@ -1,8 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>netcoreapp3.1</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>tunlify</AssemblyName>
     <LangVersion>8</LangVersion>
     <Authors>Katy Coe</Authors>
@@ -11,13 +10,10 @@
     <PackageId>Tunlify</PackageId>
     <PackageProjectUrl>https://github.com/djkaty/Tunlify</PackageProjectUrl>
   </PropertyGroup>
-
   <ItemGroup>
     <PackageReference Include="CommandLineParser" Version="2.7.82" />
   </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\Tunlify.Common\Tunlify.Common.csproj" />
   </ItemGroup>
-
 </Project>
