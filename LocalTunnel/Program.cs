@@ -15,7 +15,7 @@ new Task(() => {
         new Task(() => {
             // Handle this client.
             var clientStream = client.GetStream();
-            TcpClient server = new TcpClient("localhost", 5900);
+            TcpClient server = new TcpClient("127.0.0.1", 5900);
             var serverStream = server.GetStream();
             new Task(() => {
                 byte[] message = new byte[BUFFER_SIZE];
