@@ -169,7 +169,7 @@ class ImprovedTcpTunnelServer
         // verifying the certificate's thumbprint, or other custom logic
 
         // Example: Check if the certificate is in a list of allowed thumbprints
-        string[] allowedThumbprints = { "thumbprint1", "thumbprint2" }; // Replace with actual thumbprints
+        string[] allowedThumbprints = { "AABBCCDDEEFF00112233445566778899AABBCCDD"}; // Replace with actual thumbprints
         X509Certificate2 cert2 = new X509Certificate2(certificate);
         if (!Array.Exists(allowedThumbprints, thumbprint => thumbprint == cert2.Thumbprint))
         {
