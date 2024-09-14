@@ -1,85 +1,94 @@
 ﻿using System;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
+using System.Threading;
 using System.Threading.Tasks;
 
-class Server
+class ImprovedTcpTunnelServer
 {
     private const int ServerPort = 5900;
-    private const int RdpPort = 3742;
+    private const string RdpIp = "10.0.0.102";
+    private const int RdpPort = 3389;
+
+    private static readonly X509Certificate2 ServerCertificate = new X509Certificate2("server.pfx", "password");
 
     static async Task Main(string[] args)
     {
-        TcpListener serverListener = new TcpListener(IPAddress.Any, ServerPort);
-
         try
         {
-            serverListener.Start();
+            var listener = new TcpListener(IPAddress.Any, ServerPort);
+            listener.Start();
             Console.WriteLine($"Server listening on port {ServerPort}");
 
             while (true)
             {
-                TcpClient clientConnection = await serverListener.AcceptTcpClientAsync();
-                _ = HandleClientAsync(clientConnection);
+                TcpClient client = await listener.AcceptTcpClientAsync();
+                _ = HandleClientAsync(client);
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: {ex.Message}");
-        }
-        finally
-        {
-            serverListener.Stop();
+            Console.WriteLine($"Fatal error: {ex.Message}");
         }
     }
 
-    static async Task HandleClientAsync(TcpClient clientConnection)
+    static async Task HandleClientAsync(TcpClient client)
     {
-        using (clientConnection)
-        using (NetworkStream clientStream = clientConnection.GetStream())
+        using (client)
         {
             try
             {
-                // Read the key sent by the client
-                byte[] keyBuffer = new byte[10];
-                await clientStream.ReadAsync(keyBuffer, 0, keyBuffer.Length);
-
-                if (!VerifyKey(keyBuffer))
+                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, null))
                 {
-                    Console.WriteLine("Invalid key received. Closing connection.");
-                    return;
+                    await sslStream.AuthenticateAsServerAsync(ServerCertificate, clientCertificateRequired: true, SslProtocols.Tls12, checkCertificateRevocation: true);
+
+                    // Read the key
+                    byte[] keyBuffer = new byte[10];
+                    await sslStream.ReadAsync(keyBuffer, 0, keyBuffer.Length);
+
+                    if (!VerifyKey(keyBuffer))
+                    {
+                        Console.WriteLine("Invalid key received. Closing connection.");
+                        return;
+                    }
+
+                    // Send back the client's IP address
+                    byte[] ipBytes = ((IPEndPoint)client.Client.RemoteEndPoint).Address.GetAddressBytes();
+                    if (ipBytes.Length == 4)
+                    {
+                        byte[] paddedIpBytes = new byte[16];
+                        Array.Copy(ipBytes, 0, paddedIpBytes, 12, 4);
+                        ipBytes = paddedIpBytes;
+                    }
+                    await sslStream.WriteAsync(ipBytes, 0, ipBytes.Length);
+
+                    Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
+
+                    using (TcpClient rdpClient = new TcpClient())
+                    {
+                        await rdpClient.ConnectAsync(RdpIp, RdpPort);
+                        using (NetworkStream rdpStream = rdpClient.GetStream())
+                        {
+                            Console.WriteLine("Connected to RDP server. Forwarding traffic...");
+                            using (var cts = new CancellationTokenSource())
+                            {
+                                Task clientToRdp = ForwardTrafficAsync(sslStream, rdpStream, "Client -> RDP", cts.Token);
+                                Task rdpToClient = ForwardTrafficAsync(rdpStream, sslStream, "RDP -> Client", cts.Token);
+
+                                await Task.WhenAny(clientToRdp, rdpToClient);
+                                cts.Cancel(); // Cancel the other task when one completes
+                                await Task.WhenAll(clientToRdp, rdpToClient); // Wait for both tasks to complete
+                            }
+                        }
+                    }
                 }
-
-                // Send back the client's IP address
-                byte[] ipBytes = ((IPEndPoint)clientConnection.Client.RemoteEndPoint).Address.GetAddressBytes();
-                if (ipBytes.Length == 4)
-                {
-                    byte[] paddedIpBytes = new byte[16];
-                    Array.Copy(ipBytes, 0, paddedIpBytes, 12, 4);
-                    ipBytes = paddedIpBytes;
-                }
-                await clientStream.WriteAsync(ipBytes, 0, ipBytes.Length);
-
-                Console.WriteLine($"Client connected: {((IPEndPoint)clientConnection.Client.RemoteEndPoint).Address}");
-
-                // Wait for an RDP client to connect
-                TcpListener rdpListener = new TcpListener(IPAddress.Any, RdpPort);
-                rdpListener.Start();
-                Console.WriteLine($"Waiting for RDP client on port {RdpPort}");
-
-                using (TcpClient rdpClient = await rdpListener.AcceptTcpClientAsync())
-                using (NetworkStream rdpStream = rdpClient.GetStream())
-                {
-                    Console.WriteLine("RDP client connected. Forwarding traffic.");
-
-                    // Forward traffic in both directions
-                    Task clientToRdp = ForwardTrafficAsync(clientStream, rdpStream);
-                    Task rdpToClient = ForwardTrafficAsync(rdpStream, clientStream);
-
-                    await Task.WhenAny(clientToRdp, rdpToClient);
-                }
-
-                rdpListener.Stop();
+            }
+            catch (AuthenticationException ex)
+            {
+                Console.WriteLine($"SSL/TLS authentication failed: {ex.Message}");
             }
             catch (Exception ex)
             {
@@ -88,20 +97,39 @@ class Server
         }
     }
 
-    static async Task ForwardTrafficAsync(NetworkStream source, NetworkStream destination)
+    static async Task ForwardTrafficAsync(Stream source, Stream destination, string direction, CancellationToken cancellationToken)
     {
-        byte[] buffer = new byte[4096];
-        int bytesRead;
-        while ((bytesRead = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
+        byte[] buffer = new byte[8192];
+        try
         {
-            await destination.WriteAsync(buffer, 0, bytesRead);
-            await destination.FlushAsync();
+            int bytesRead;
+            while (!cancellationToken.IsCancellationRequested &&
+                   (bytesRead = await source.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
+            {
+                await destination.WriteAsync(buffer, 0, bytesRead, cancellationToken);
+                await destination.FlushAsync(cancellationToken);
+                Console.WriteLine($"{direction}: Forwarded {bytesRead} bytes");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when cancellation is requested
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in {direction}: {ex.Message}");
         }
     }
 
-    static bool VerifyKey(byte[] key)
+    private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
-        // Implement your key verification logic here
+        // In a production environment, you should implement proper certificate validation
+        // This example accepts all client certificates (NOT recommended for production use)
+        return true;
+    }
+
+    private static bool VerifyKey(byte[] key)
+    {
         byte[] expectedKey = new byte[] { 0, 8, 0, 0, 0, 34, 77, 0, 0, 0 };
         return key.AsSpan().SequenceEqual(expectedKey);
     }
