@@ -45,6 +45,11 @@ class ImprovedTcpTunnelServer
                 _ = HandleClientAsync(client);
             }
         }
+        catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+        {
+            // Console.WriteLine($"Error: Address already in use. {ex.Message}");
+            // We're commenting out this log as requested
+        }
         catch (Exception ex)
         {
             Console.WriteLine($"Fatal error: {ex.Message}");
