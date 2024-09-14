@@ -153,21 +153,21 @@ class ImprovedTcpTunnelServer
         // Convert the certificate to X509Certificate2
         X509Certificate2 cert2 = new X509Certificate2(certificate);
 
-        // Log certificate details
-        Console.WriteLine($"Client Certificate Details:");
-        Console.WriteLine($"Subject: {cert2.Subject}");
-        Console.WriteLine($"Issuer: {cert2.Issuer}");
-        Console.WriteLine($"Thumbprint: {cert2.Thumbprint}");
-        Console.WriteLine($"Not Before: {cert2.NotBefore}");
-        Console.WriteLine($"Not After: {cert2.NotAfter}");
+        //// Log certificate details
+        //Console.WriteLine($"Client Certificate Details:");
+        //Console.WriteLine($"Subject: {cert2.Subject}");
+        //Console.WriteLine($"Issuer: {cert2.Issuer}");
+        //Console.WriteLine($"Thumbprint: {cert2.Thumbprint}");
+        //Console.WriteLine($"Not Before: {cert2.NotBefore}");
+        //Console.WriteLine($"Not After: {cert2.NotAfter}");
 
-        // For testing purposes, accept all client certificates
-        // WARNING: This is not secure for production use!
-        Console.WriteLine("Accepting all client certificates for testing purposes.");
-        return true;
+        //// For testing purposes, accept all client certificates
+        //// WARNING: This is not secure for production use!
+        //Console.WriteLine("Accepting all client certificates for testing purposes.");
+        //return true;
 
         // Define the allowed thumbprint(s)
-        string[] allowedThumbprints = { "AABBCCDDEEFF00112233445566778899AABBCCDD" };
+        string[] allowedThumbprints = { "B009F424AB0683DD7BF68BA98193132B5A298814" };
 
         // Check if the certificate's thumbprint is in the list of allowed thumbprints
         if (!allowedThumbprints.Contains(cert2.Thumbprint))
