@@ -147,9 +147,6 @@ class ImprovedTcpTunnelServer
 
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
-        // Implement your specific validation logic here
-        Console.WriteLine($"Validating client certificate. Errors: {sslPolicyErrors}");
-
         // Convert the certificate to X509Certificate2
         X509Certificate2 cert2 = new X509Certificate2(certificate);
 
@@ -159,31 +156,15 @@ class ImprovedTcpTunnelServer
         // Check if the certificate's thumbprint is in the list of allowed thumbprints
         if (!allowedThumbprints.Contains(cert2.Thumbprint))
         {
-            Console.WriteLine("Client certificate is not in the list of allowed certificates.");
+            Console.WriteLine($"Client certificate is not in the list of allowed certificates. Thumbprint: {cert2.Thumbprint}");
             return false;
         }
 
-        // Ignore RemoteCertificateNameMismatch and RemoteCertificateChainErrors for self-signed certs
-        if (sslPolicyErrors == SslPolicyErrors.RemoteCertificateNameMismatch ||
-            sslPolicyErrors == SslPolicyErrors.RemoteCertificateChainErrors ||
-            sslPolicyErrors == (SslPolicyErrors.RemoteCertificateNameMismatch | SslPolicyErrors.RemoteCertificateChainErrors))
+        // Ignore chain validation errors for self-signed certificates
+        if (sslPolicyErrors == SslPolicyErrors.RemoteCertificateChainErrors)
         {
-            Console.WriteLine("Ignoring name mismatch and/or chain validation errors for self-signed certificate.");
+            Console.WriteLine("Ignoring chain validation errors for self-signed certificate.");
             return true;
-        }
-
-        // If we get here and there are still SSL policy errors, the certificate is not valid
-        if (sslPolicyErrors != SslPolicyErrors.None)
-        {
-            Console.WriteLine($"Certificate validation failed due to {sslPolicyErrors}");
-            return false;
-        }
-
-        // Check certificate expiration
-        if (DateTime.Now > cert2.NotAfter || DateTime.Now < cert2.NotBefore)
-        {
-            Console.WriteLine("Client certificate is not within its validity period.");
-            return false;
         }
 
         // If we get here, the certificate is valid

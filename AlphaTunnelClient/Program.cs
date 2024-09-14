@@ -109,42 +109,26 @@ class ImprovedTcpTunnelClient
 
     private static bool ValidateServerCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
-        if (sslPolicyErrors == SslPolicyErrors.None)
+        Console.WriteLine($"Validating server certificate. Errors: {sslPolicyErrors}");
+
+        // For testing purposes, we'll ignore RemoteCertificateNameMismatch and RemoteCertificateChainErrors
+        if (sslPolicyErrors == SslPolicyErrors.RemoteCertificateNameMismatch ||
+            sslPolicyErrors == SslPolicyErrors.RemoteCertificateChainErrors ||
+            sslPolicyErrors == (SslPolicyErrors.RemoteCertificateNameMismatch | SslPolicyErrors.RemoteCertificateChainErrors))
+        {
+            Console.WriteLine("Ignoring name mismatch and/or chain validation errors for self-signed certificate.");
             return true;
-
-        Console.WriteLine($"Certificate error: {sslPolicyErrors}");
-
-        // Certificate validation error handling
-        if ((sslPolicyErrors & SslPolicyErrors.RemoteCertificateChainErrors) != 0)
-        {
-            chain.ChainPolicy.RevocationFlag = X509RevocationFlag.EntireChain;
-            chain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
-            chain.ChainPolicy.UrlRetrievalTimeout = new TimeSpan(0, 1, 0);
-            chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllFlags;
-
-            if (!chain.Build((X509Certificate2)certificate))
-            {
-                Console.WriteLine("Chain building failed");
-                return false;
-            }
         }
 
-        // Check if the certificate is issued to the expected server
-        string expectedServerName = "bigblazor.com"; // Replace with your actual server name
-        if (!certificate.Subject.Contains($"CN={expectedServerName}"))
+        // If there are any other SSL policy errors, reject the certificate
+        if (sslPolicyErrors != SslPolicyErrors.None)
         {
-            Console.WriteLine("Certificate is not issued to the expected server.");
+            Console.WriteLine($"Certificate validation failed due to {sslPolicyErrors}");
             return false;
         }
 
-        // Check certificate expiration
-        if (DateTime.Parse(certificate.GetExpirationDateString()) < DateTime.Now)
-        {
-            Console.WriteLine("Certificate has expired.");
-            return false;
-        }
-
-        // If we get here, we're satisfied with the certificate
+        // If we get here, the certificate is valid
+        Console.WriteLine("Server certificate validated successfully.");
         return true;
     }
 }
