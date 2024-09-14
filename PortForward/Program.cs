@@ -13,7 +13,7 @@ public class AsynchronousSocketListener
         var ipHostInfo = Dns.GetHostEntry("localhost");
         var ipAddress = ipHostInfo.AddressList[0];
         Console.WriteLine(ipAddress);
-        var localEndPoint = new IPEndPoint(ipAddress, 13000);
+        var localEndPoint = new IPEndPoint(IPAddress.Parse("127.0.0.1"), 13000);
 
         // Create a TCP/IP socket.  
         var listener = new Socket(ipAddress.AddressFamily,
