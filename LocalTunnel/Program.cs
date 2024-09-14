@@ -1,38 +1,70 @@
-﻿using System.Net.Sockets;
+﻿using System.Diagnostics;
+using System.Net.Sockets;
 using System.Net;
-using System.Text;
 
-var ipEndPoint = new IPEndPoint(IPAddress.Any, 3742);
-TcpListener listener = new(ipEndPoint);
+ TcpListener listener = new TcpListener(IPAddress.Any, 3742);
 
-try
-{
-    listener.Start();
+const int BUFFER_SIZE = 4096;
+
+listener.Start();
+new Task(() => {
+    // Accept clients.
     while (true)
     {
-        Socket client = listener.AcceptSocket();
-        Console.WriteLine("Connection accepted.");
-
-        var childSocketThread = new Thread(() =>
-        {
-            byte[] data = new byte[100];
-            int size = client.Receive(data);
-            Console.WriteLine("Recieved data: ");
-
-            for (int i = 0; i < size; i++)
-            {
-                Console.Write(Convert.ToChar(data[i]));
-            }
-
-            Console.WriteLine();
-
-            client.Close();
-        });
-
-        childSocketThread.Start();
+        var client = listener.AcceptTcpClient();
+        new Task(() => {
+            // Handle this client.
+            var clientStream = client.GetStream();
+            TcpClient server = new TcpClient("10.47.0.5", 5900);
+            var serverStream = server.GetStream();
+            new Task(() => {
+                byte[] message = new byte[BUFFER_SIZE];
+                int clientBytes;
+                while (true)
+                {
+                    try
+                    {
+                        clientBytes = clientStream.Read(message, 0, BUFFER_SIZE);
+                    }
+                    catch
+                    {
+                        // Socket error - exit loop.  Client will have to reconnect.
+                        break;
+                    }
+                    if (clientBytes == 0)
+                    {
+                        // Client disconnected.
+                        break;
+                    }
+                    serverStream.Write(message, 0, clientBytes);
+                }
+                client.Close();
+            }).Start();
+            new Task(() => {
+                byte[] message = new byte[BUFFER_SIZE];
+                int serverBytes;
+                while (true)
+                {
+                    try
+                    {
+                        serverBytes = serverStream.Read(message, 0, BUFFER_SIZE);
+                        clientStream.Write(message, 0, serverBytes);
+                    }
+                    catch
+                    {
+                        // Server socket error - exit loop.  Client will have to reconnect.
+                        break;
+                    }
+                    if (serverBytes == 0)
+                    {
+                        // server disconnected.
+                        break;
+                    }
+                }
+            }).Start();
+        }).Start();
     }
-}
-finally
-{
-    listener.Stop();
-}
+}).Start();
+Debug.WriteLine("Server listening on port 4502.  Press enter to exit.");
+Console.ReadLine();
+listener.Stop();
