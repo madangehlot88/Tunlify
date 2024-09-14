@@ -56,9 +56,9 @@ public class AsynchronousSocketListener
         if (_rdpSocket == null)
         {
             Console.WriteLine("**** Establishing the connection to the RDP server");
-            var ipHostInfo = Dns.GetHostEntry("152.59.100.3");
+            var ipHostInfo = Dns.GetHostEntry("localhost");
             var ipAddress = ipHostInfo.AddressList[0];
-            var endPoint = new IPEndPoint(ipAddress, 3389);
+            var endPoint = new IPEndPoint(ipAddress, 5900);
 
             // Create a TCP/IP socket.  
             _rdpSocket = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
