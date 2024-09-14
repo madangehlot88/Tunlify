@@ -9,9 +9,8 @@ using System.Threading.Tasks;
 
 class ImprovedTcpTunnelServer
 {
-    private static int ServerPort;
-    private static string LocalIp;
-    private static int TunnelPort;
+    private static int TunnelPort;  // This is the port the TcpListener will use
+    private static int ServerPort;  // This is the port for the local service we're tunneling to
 
     private static readonly X509Certificate2 ServerCertificate = new X509Certificate2("server.pfx", "1234");
 
@@ -19,25 +18,24 @@ class ImprovedTcpTunnelServer
     {
         if (args.Length != 1)
         {
-            Console.WriteLine("Usage: TcpTunnelServer <TunnelPort>");
+            Console.WriteLine("Usage: TcpTunnelServer <ServerPort>");
             return;
         }
 
-        if (!int.TryParse(args[0], out TunnelPort))
+        if (!int.TryParse(args[0], out ServerPort))
         {
-            Console.WriteLine("Invalid TunnelPort. Please provide a valid port number.");
+            Console.WriteLine("Invalid ServerPort. Please provide a valid port number.");
             return;
         }
 
         try
         {
-            ServerPort = GetAvailablePort();
-            LocalIp = GetLocalIpAddress();
+            TunnelPort = GetAvailablePort();
 
-            var listener = new TcpListener(IPAddress.Any, ServerPort);
+            var listener = new TcpListener(IPAddress.Any, TunnelPort);
             listener.Start();
-            Console.WriteLine($"Server listening on port {ServerPort}");
-            Console.WriteLine($"Tunnel endpoint: {LocalIp}:{TunnelPort}");
+            Console.WriteLine($"Tunnel listening on port {TunnelPort}");
+            Console.WriteLine($"Forwarding to local service on port {ServerPort}");
 
             while (true)
             {
@@ -47,8 +45,7 @@ class ImprovedTcpTunnelServer
         }
         catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
         {
-            // Console.WriteLine($"Error: Address already in use. {ex.Message}");
-            // We're commenting out this log as requested
+            // Address already in use error is silently handled
         }
         catch (Exception ex)
         {
@@ -63,19 +60,6 @@ class ImprovedTcpTunnelServer
         int port = ((IPEndPoint)l.LocalEndpoint).Port;
         l.Stop();
         return port;
-    }
-
-    static string GetLocalIpAddress()
-    {
-        var host = Dns.GetHostEntry(Dns.GetHostName());
-        foreach (var ip in host.AddressList)
-        {
-            if (ip.AddressFamily == AddressFamily.InterNetwork)
-            {
-                return ip.ToString();
-            }
-        }
-        throw new Exception("No network adapters with an IPv4 address in the system!");
     }
 
     static async Task HandleClientAsync(TcpClient client)
@@ -98,9 +82,9 @@ class ImprovedTcpTunnelServer
                         return;
                     }
 
-                    // Send back the client's IP address and the server port
+                    // Send back the client's IP address and the tunnel port
                     byte[] ipBytes = ((IPEndPoint)client.Client.RemoteEndPoint).Address.GetAddressBytes();
-                    byte[] portBytes = BitConverter.GetBytes(ServerPort);
+                    byte[] portBytes = BitConverter.GetBytes(TunnelPort);
                     byte[] response = new byte[20]; // 16 bytes for IP, 4 bytes for port
                     Array.Copy(ipBytes, 0, response, 0, ipBytes.Length);
                     Array.Copy(portBytes, 0, response, 16, 4);
@@ -108,20 +92,20 @@ class ImprovedTcpTunnelServer
 
                     Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
 
-                    using (TcpClient tunnelClient = new TcpClient())
+                    using (TcpClient serverClient = new TcpClient())
                     {
-                        await tunnelClient.ConnectAsync(LocalIp, TunnelPort);
-                        using (NetworkStream tunnelStream = tunnelClient.GetStream())
+                        await serverClient.ConnectAsync(IPAddress.Loopback, ServerPort);
+                        using (NetworkStream serverStream = serverClient.GetStream())
                         {
-                            Console.WriteLine($"Connected to tunnel endpoint at {LocalIp}:{TunnelPort}. Forwarding traffic...");
+                            Console.WriteLine($"Connected to local service on port {ServerPort}. Forwarding traffic...");
                             using (var cts = new CancellationTokenSource())
                             {
-                                Task clientToTunnel = ForwardTrafficAsync(sslStream, tunnelStream, "Client -> Tunnel", cts.Token);
-                                Task tunnelToClient = ForwardTrafficAsync(tunnelStream, sslStream, "Tunnel -> Client", cts.Token);
+                                Task clientToServer = ForwardTrafficAsync(sslStream, serverStream, "Client -> Server", cts.Token);
+                                Task serverToClient = ForwardTrafficAsync(serverStream, sslStream, "Server -> Client", cts.Token);
 
-                                await Task.WhenAny(clientToTunnel, tunnelToClient);
+                                await Task.WhenAny(clientToServer, serverToClient);
                                 cts.Cancel(); // Cancel the other task when one completes
-                                await Task.WhenAll(clientToTunnel, tunnelToClient); // Wait for both tasks to complete
+                                await Task.WhenAll(clientToServer, serverToClient); // Wait for both tasks to complete
                             }
                         }
                     }
@@ -137,7 +121,6 @@ class ImprovedTcpTunnelServer
             }
         }
     }
-
     static async Task ForwardTrafficAsync(Stream source, Stream destination, string direction, CancellationToken cancellationToken)
     {
         byte[] buffer = new byte[8192];
