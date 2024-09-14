@@ -9,9 +9,9 @@ using System.Threading.Tasks;
 
 class ImprovedTcpTunnelServer
 {
-    private const int ServerPort = 5900;
-    private const string RdpIp = "10.0.0.102";
-    private const int RdpPort = 3389;
+    private static int ServerPort;
+    private const string TunnelIp = "10.0.0.102";
+    private const int TunnelPort = 3389;
 
     private static readonly X509Certificate2 ServerCertificate = new X509Certificate2("server.pfx", "password");
 
@@ -19,6 +19,7 @@ class ImprovedTcpTunnelServer
     {
         try
         {
+            ServerPort = GetAvailablePort();
             var listener = new TcpListener(IPAddress.Any, ServerPort);
             listener.Start();
             Console.WriteLine($"Server listening on port {ServerPort}");
@@ -35,13 +36,22 @@ class ImprovedTcpTunnelServer
         }
     }
 
+    static int GetAvailablePort()
+    {
+        TcpListener l = new TcpListener(IPAddress.Loopback, 0);
+        l.Start();
+        int port = ((IPEndPoint)l.LocalEndpoint).Port;
+        l.Stop();
+        return port;
+    }
+
     static async Task HandleClientAsync(TcpClient client)
     {
         using (client)
         {
             try
             {
-                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, null))
+                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, SelectServerCertificate))
                 {
                     await sslStream.AuthenticateAsServerAsync(ServerCertificate, clientCertificateRequired: true, SslProtocols.Tls12, checkCertificateRevocation: true);
 
@@ -55,32 +65,30 @@ class ImprovedTcpTunnelServer
                         return;
                     }
 
-                    // Send back the client's IP address
+                    // Send back the client's IP address and the server port
                     byte[] ipBytes = ((IPEndPoint)client.Client.RemoteEndPoint).Address.GetAddressBytes();
-                    if (ipBytes.Length == 4)
-                    {
-                        byte[] paddedIpBytes = new byte[16];
-                        Array.Copy(ipBytes, 0, paddedIpBytes, 12, 4);
-                        ipBytes = paddedIpBytes;
-                    }
-                    await sslStream.WriteAsync(ipBytes, 0, ipBytes.Length);
+                    byte[] portBytes = BitConverter.GetBytes(ServerPort);
+                    byte[] response = new byte[20]; // 16 bytes for IP, 4 bytes for port
+                    Array.Copy(ipBytes, 0, response, 0, ipBytes.Length);
+                    Array.Copy(portBytes, 0, response, 16, 4);
+                    await sslStream.WriteAsync(response, 0, response.Length);
 
                     Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
 
-                    using (TcpClient rdpClient = new TcpClient())
+                    using (TcpClient tunnelClient = new TcpClient())
                     {
-                        await rdpClient.ConnectAsync(RdpIp, RdpPort);
-                        using (NetworkStream rdpStream = rdpClient.GetStream())
+                        await tunnelClient.ConnectAsync(TunnelIp, TunnelPort);
+                        using (NetworkStream tunnelStream = tunnelClient.GetStream())
                         {
-                            Console.WriteLine("Connected to RDP server. Forwarding traffic...");
+                            Console.WriteLine($"Connected to tunnel endpoint at {TunnelIp}:{TunnelPort}. Forwarding traffic...");
                             using (var cts = new CancellationTokenSource())
                             {
-                                Task clientToRdp = ForwardTrafficAsync(sslStream, rdpStream, "Client -> RDP", cts.Token);
-                                Task rdpToClient = ForwardTrafficAsync(rdpStream, sslStream, "RDP -> Client", cts.Token);
+                                Task clientToTunnel = ForwardTrafficAsync(sslStream, tunnelStream, "Client -> Tunnel", cts.Token);
+                                Task tunnelToClient = ForwardTrafficAsync(tunnelStream, sslStream, "Tunnel -> Client", cts.Token);
 
-                                await Task.WhenAny(clientToRdp, rdpToClient);
+                                await Task.WhenAny(clientToTunnel, tunnelToClient);
                                 cts.Cancel(); // Cancel the other task when one completes
-                                await Task.WhenAll(clientToRdp, rdpToClient); // Wait for both tasks to complete
+                                await Task.WhenAll(clientToTunnel, tunnelToClient); // Wait for both tasks to complete
                             }
                         }
                     }
@@ -121,36 +129,19 @@ class ImprovedTcpTunnelServer
         }
     }
 
-    // For the server to validate the client's certificate
-    public static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+    private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
-        if (sslPolicyErrors == SslPolicyErrors.None)
-            return true;
+        // Implement proper certificate validation here
+        // This is a placeholder and should be replaced with actual validation logic
+        Console.WriteLine($"Validating client certificate. Errors: {sslPolicyErrors}");
+        return true; // WARNING: Don't use this in production!
+    }
 
-        Console.WriteLine($"Certificate error: {sslPolicyErrors}");
-
-        // Implement your specific validation logic here
-        // This might include checking against a list of known client certificates,
-        // verifying the certificate's thumbprint, or other custom logic
-
-        // Example: Check if the certificate is in a list of allowed thumbprints
-        string[] allowedThumbprints = { "thumbprint1", "thumbprint2" };
-        X509Certificate2 cert2 = new X509Certificate2(certificate);
-        if (!Array.Exists(allowedThumbprints, thumbprint => thumbprint == cert2.Thumbprint))
-        {
-            Console.WriteLine("Client certificate is not in the list of allowed certificates.");
-            return false;
-        }
-
-        // Example: Check certificate expiration
-        if (DateTime.Parse(certificate.GetExpirationDateString()) < DateTime.Now)
-        {
-            Console.WriteLine("Client certificate has expired.");
-            return false;
-        }
-
-        // If we get here, we're satisfied with the certificate
-        return true;
+    private static X509Certificate SelectServerCertificate(object sender, string hostName, X509CertificateCollection localCertificates, X509Certificate remoteCertificate, string[] acceptableIssuers)
+    {
+        // Here you can implement logic to select the appropriate server certificate
+        // For now, we're just returning the single server certificate we loaded
+        return ServerCertificate;
     }
 
     private static bool VerifyKey(byte[] key)
