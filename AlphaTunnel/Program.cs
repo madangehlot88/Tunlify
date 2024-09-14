@@ -121,10 +121,35 @@ class ImprovedTcpTunnelServer
         }
     }
 
-    private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+    // For the server to validate the client's certificate
+    public static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
-        // In a production environment, you should implement proper certificate validation
-        // This example accepts all client certificates (NOT recommended for production use)
+        if (sslPolicyErrors == SslPolicyErrors.None)
+            return true;
+
+        Console.WriteLine($"Certificate error: {sslPolicyErrors}");
+
+        // Implement your specific validation logic here
+        // This might include checking against a list of known client certificates,
+        // verifying the certificate's thumbprint, or other custom logic
+
+        // Example: Check if the certificate is in a list of allowed thumbprints
+        string[] allowedThumbprints = { "thumbprint1", "thumbprint2" };
+        X509Certificate2 cert2 = new X509Certificate2(certificate);
+        if (!Array.Exists(allowedThumbprints, thumbprint => thumbprint == cert2.Thumbprint))
+        {
+            Console.WriteLine("Client certificate is not in the list of allowed certificates.");
+            return false;
+        }
+
+        // Example: Check certificate expiration
+        if (DateTime.Parse(certificate.GetExpirationDateString()) < DateTime.Now)
+        {
+            Console.WriteLine("Client certificate has expired.");
+            return false;
+        }
+
+        // If we get here, we're satisfied with the certificate
         return true;
     }
 
