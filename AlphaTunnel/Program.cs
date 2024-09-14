@@ -94,7 +94,7 @@ class ImprovedTcpTunnelServer
 
                     using (TcpClient serverClient = new TcpClient())
                     {
-                        await serverClient.ConnectAsync(IPAddress.Any, ServerPort);
+                        await serverClient.ConnectAsync(IPAddress.Loopback, ServerPort);
                         using (NetworkStream serverStream = serverClient.GetStream())
                         {
                             Console.WriteLine($"Connected to local service on port {ServerPort}. Forwarding traffic...");
