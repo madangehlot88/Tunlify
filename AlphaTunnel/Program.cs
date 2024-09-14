@@ -94,7 +94,17 @@ class ImprovedTcpTunnelServer
 
                     using (TcpClient serverClient = new TcpClient())
                     {
-                        await serverClient.ConnectAsync(IPAddress.Loopback, ServerPort);
+                        try
+                        {
+                            await serverClient.ConnectAsync(IPAddress.Any, ServerPort);
+                        }
+                        catch (SocketException se)
+                        {
+                            Console.WriteLine($"Failed to connect to local service: {se.Message}");
+                            Console.WriteLine($"Error code: {se.SocketErrorCode}");
+                            Console.WriteLine($"Is the service running on port {ServerPort}?");
+                            return;
+                        }
                         using (NetworkStream serverStream = serverClient.GetStream())
                         {
                             Console.WriteLine($"Connected to local service on port {ServerPort}. Forwarding traffic...");
@@ -114,10 +124,12 @@ class ImprovedTcpTunnelServer
             catch (AuthenticationException ex)
             {
                 Console.WriteLine($"SSL/TLS authentication failed: {ex.Message}");
+                Console.WriteLine($"Inner Exception: {ex.InnerException?.Message}");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error handling client: {ex.Message}");
+                Console.WriteLine($"Inner Exception: {ex.InnerException?.Message}");
             }
         }
     }
