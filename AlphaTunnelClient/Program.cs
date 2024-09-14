@@ -109,9 +109,42 @@ class ImprovedTcpTunnelClient
 
     private static bool ValidateServerCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
-        // Implement proper certificate validation here
-        // This is a placeholder and should be replaced with actual validation logic
-        Console.WriteLine($"Validating server certificate. Errors: {sslPolicyErrors}");
-        return true; // WARNING: Don't use this in production!
+        if (sslPolicyErrors == SslPolicyErrors.None)
+            return true;
+
+        Console.WriteLine($"Certificate error: {sslPolicyErrors}");
+
+        // Certificate validation error handling
+        if ((sslPolicyErrors & SslPolicyErrors.RemoteCertificateChainErrors) != 0)
+        {
+            chain.ChainPolicy.RevocationFlag = X509RevocationFlag.EntireChain;
+            chain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
+            chain.ChainPolicy.UrlRetrievalTimeout = new TimeSpan(0, 1, 0);
+            chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllFlags;
+
+            if (!chain.Build((X509Certificate2)certificate))
+            {
+                Console.WriteLine("Chain building failed");
+                return false;
+            }
+        }
+
+        // Check if the certificate is issued to the expected server
+        string expectedServerName = "your_server_name"; // Replace with your actual server name
+        if (!certificate.Subject.Contains($"CN={expectedServerName}"))
+        {
+            Console.WriteLine("Certificate is not issued to the expected server.");
+            return false;
+        }
+
+        // Check certificate expiration
+        if (DateTime.Parse(certificate.GetExpirationDateString()) < DateTime.Now)
+        {
+            Console.WriteLine("Certificate has expired.");
+            return false;
+        }
+
+        // If we get here, we're satisfied with the certificate
+        return true;
     }
 }
