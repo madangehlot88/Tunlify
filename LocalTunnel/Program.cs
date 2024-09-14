@@ -15,7 +15,7 @@ new Task(() => {
         new Task(() => {
             // Handle this client.
             var clientStream = client.GetStream();
-            TcpClient server = new TcpClient("10.47.0.5", 5900);
+            TcpClient server = new TcpClient("localhost", 5900);
             var serverStream = server.GetStream();
             new Task(() => {
                 byte[] message = new byte[BUFFER_SIZE];
@@ -65,6 +65,6 @@ new Task(() => {
         }).Start();
     }
 }).Start();
-Debug.WriteLine("Server listening on port 4502.  Press enter to exit.");
+Console.WriteLine("Server listening on port 3742.  Press enter to exit.");
 Console.ReadLine();
 listener.Stop();
