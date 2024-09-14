@@ -30,7 +30,8 @@ class ImprovedTcpTunnelServer
 
         try
         {
-            TunnelPort = GetAvailablePort();
+            //TunnelPort = GetAvailablePort();
+            TunnelPort = 5900;
 
             var listener = new TcpListener(IPAddress.Any, TunnelPort);
             listener.Start();
@@ -61,7 +62,6 @@ class ImprovedTcpTunnelServer
         l.Stop();
         return port;
     }
-
     static async Task HandleClientAsync(TcpClient client)
     {
         using (client)
@@ -92,33 +92,24 @@ class ImprovedTcpTunnelServer
 
                     Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
 
-                    using (TcpClient serverClient = new TcpClient())
-                    {
-                        try
-                        {
-                            await serverClient.ConnectAsync(IPAddress.Any, ServerPort);
-                        }
-                        catch (SocketException se)
-                        {
-                            Console.WriteLine($"Failed to connect to local service: {se.Message}");
-                            Console.WriteLine($"Error code: {se.SocketErrorCode}");
-                            Console.WriteLine($"Is the service running on port {ServerPort}?");
-                            return;
-                        }
-                        using (NetworkStream serverStream = serverClient.GetStream())
-                        {
-                            Console.WriteLine($"Connected to local service on port {ServerPort}. Forwarding traffic...");
-                            using (var cts = new CancellationTokenSource())
-                            {
-                                Task clientToServer = ForwardTrafficAsync(sslStream, serverStream, "Client -> Server", cts.Token);
-                                Task serverToClient = ForwardTrafficAsync(serverStream, sslStream, "Server -> Client", cts.Token);
+                    // Wait for a connection on the ServerPort
+                    TcpListener serverListener = new TcpListener(IPAddress.Any, ServerPort);
+                    serverListener.Start();
+                    Console.WriteLine($"Waiting for local service connection on port {ServerPort}");
 
-                                await Task.WhenAny(clientToServer, serverToClient);
-                                cts.Cancel(); // Cancel the other task when one completes
-                                await Task.WhenAll(clientToServer, serverToClient); // Wait for both tasks to complete
-                            }
-                        }
+                    using (TcpClient serverClient = await serverListener.AcceptTcpClientAsync())
+                    using (NetworkStream serverStream = serverClient.GetStream())
+                    {
+                        Console.WriteLine($"Local service connected on port {ServerPort}. Forwarding traffic...");
+
+                        // Forward traffic in both directions
+                        Task clientToServer = ForwardTrafficAsync(sslStream, serverStream, "Client -> Server");
+                        Task serverToClient = ForwardTrafficAsync(serverStream, sslStream, "Server -> Client");
+
+                        await Task.WhenAny(clientToServer, serverToClient);
                     }
+
+                    serverListener.Stop();
                 }
             }
             catch (AuthenticationException ex)
@@ -133,30 +124,30 @@ class ImprovedTcpTunnelServer
             }
         }
     }
-    static async Task ForwardTrafficAsync(Stream source, Stream destination, string direction, CancellationToken cancellationToken)
+
+    static async Task ForwardTrafficAsync(Stream source, Stream destination, string direction)
     {
         byte[] buffer = new byte[8192];
         try
         {
             int bytesRead;
-            while (!cancellationToken.IsCancellationRequested &&
-                   (bytesRead = await source.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
+            while ((bytesRead = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
             {
-                await destination.WriteAsync(buffer, 0, bytesRead, cancellationToken);
-                await destination.FlushAsync(cancellationToken);
+                await destination.WriteAsync(buffer, 0, bytesRead);
+                await destination.FlushAsync();
                 Console.WriteLine($"{direction}: Forwarded {bytesRead} bytes");
             }
         }
-        catch (OperationCanceledException)
+        catch (IOException)
         {
-            // Expected when cancellation is requested
+            // The client has disconnected
+            Console.WriteLine($"{direction}: Connection closed");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error in {direction}: {ex.Message}");
         }
     }
-
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
         // Convert the certificate to X509Certificate2
