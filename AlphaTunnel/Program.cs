@@ -94,7 +94,7 @@ class ImprovedTcpTunnelServer
 
                     using (TcpClient serverClient = new TcpClient())
                     {
-                        await serverClient.ConnectAsync(IPAddress.Loopback, ServerPort);
+                        await serverClient.ConnectAsync(IPAddress.Any, ServerPort);
                         using (NetworkStream serverStream = serverClient.GetStream())
                         {
                             Console.WriteLine($"Connected to local service on port {ServerPort}. Forwarding traffic...");
@@ -147,32 +147,47 @@ class ImprovedTcpTunnelServer
 
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
-        if (sslPolicyErrors == SslPolicyErrors.None)
-            return true;
-
-        Console.WriteLine($"Certificate error: {sslPolicyErrors}");
-
         // Implement your specific validation logic here
-        // This might include checking against a list of known client certificates,
-        // verifying the certificate's thumbprint, or other custom logic
+        Console.WriteLine($"Validating client certificate. Errors: {sslPolicyErrors}");
 
-        // Example: Check if the certificate is in a list of allowed thumbprints
-        string[] allowedThumbprints = { "AABBCCDDEEFF00112233445566778899AABBCCDD"}; // Replace with actual thumbprints
+        // Convert the certificate to X509Certificate2
         X509Certificate2 cert2 = new X509Certificate2(certificate);
-        if (!Array.Exists(allowedThumbprints, thumbprint => thumbprint == cert2.Thumbprint))
+
+        // Define the allowed thumbprint(s)
+        string[] allowedThumbprints = { "AABBCCDDEEFF00112233445566778899AABBCCDD" };
+
+        // Check if the certificate's thumbprint is in the list of allowed thumbprints
+        if (!allowedThumbprints.Contains(cert2.Thumbprint))
         {
             Console.WriteLine("Client certificate is not in the list of allowed certificates.");
             return false;
         }
 
-        // Check certificate expiration
-        if (DateTime.Parse(certificate.GetExpirationDateString()) < DateTime.Now)
+        // Ignore RemoteCertificateNameMismatch and RemoteCertificateChainErrors for self-signed certs
+        if (sslPolicyErrors == SslPolicyErrors.RemoteCertificateNameMismatch ||
+            sslPolicyErrors == SslPolicyErrors.RemoteCertificateChainErrors ||
+            sslPolicyErrors == (SslPolicyErrors.RemoteCertificateNameMismatch | SslPolicyErrors.RemoteCertificateChainErrors))
         {
-            Console.WriteLine("Client certificate has expired.");
+            Console.WriteLine("Ignoring name mismatch and/or chain validation errors for self-signed certificate.");
+            return true;
+        }
+
+        // If we get here and there are still SSL policy errors, the certificate is not valid
+        if (sslPolicyErrors != SslPolicyErrors.None)
+        {
+            Console.WriteLine($"Certificate validation failed due to {sslPolicyErrors}");
             return false;
         }
 
-        // If we get here, we're satisfied with the certificate
+        // Check certificate expiration
+        if (DateTime.Now > cert2.NotAfter || DateTime.Now < cert2.NotBefore)
+        {
+            Console.WriteLine("Client certificate is not within its validity period.");
+            return false;
+        }
+
+        // If we get here, the certificate is valid
+        Console.WriteLine("Client certificate validated successfully.");
         return true;
     }
 
