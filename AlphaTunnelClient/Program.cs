@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 class ImprovedTcpTunnelClient
 {
-    private static readonly X509Certificate2 ClientCertificate = new X509Certificate2("client.pfx", "password");
+    private static readonly X509Certificate2 ClientCertificate = new X509Certificate2("client.pfx", "1234");
 
     static async Task Main(string[] args)
     {
@@ -130,7 +130,7 @@ class ImprovedTcpTunnelClient
         }
 
         // Check if the certificate is issued to the expected server
-        string expectedServerName = "your_server_name"; // Replace with your actual server name
+        string expectedServerName = "bigblazor.com"; // Replace with your actual server name
         if (!certificate.Subject.Contains($"CN={expectedServerName}"))
         {
             Console.WriteLine("Certificate is not issued to the expected server.");

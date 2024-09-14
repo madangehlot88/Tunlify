@@ -10,19 +10,34 @@ using System.Threading.Tasks;
 class ImprovedTcpTunnelServer
 {
     private static int ServerPort;
-    private const string TunnelIp = "10.0.0.102";
-    private const int TunnelPort = 3389;
+    private static string LocalIp;
+    private static int TunnelPort;
 
-    private static readonly X509Certificate2 ServerCertificate = new X509Certificate2("server.pfx", "password");
+    private static readonly X509Certificate2 ServerCertificate = new X509Certificate2("server.pfx", "1234");
 
     static async Task Main(string[] args)
     {
+        if (args.Length != 1)
+        {
+            Console.WriteLine("Usage: TcpTunnelServer <TunnelPort>");
+            return;
+        }
+
+        if (!int.TryParse(args[0], out TunnelPort))
+        {
+            Console.WriteLine("Invalid TunnelPort. Please provide a valid port number.");
+            return;
+        }
+
         try
         {
             ServerPort = GetAvailablePort();
+            LocalIp = GetLocalIpAddress();
+
             var listener = new TcpListener(IPAddress.Any, ServerPort);
             listener.Start();
             Console.WriteLine($"Server listening on port {ServerPort}");
+            Console.WriteLine($"Tunnel endpoint: {LocalIp}:{TunnelPort}");
 
             while (true)
             {
@@ -43,6 +58,19 @@ class ImprovedTcpTunnelServer
         int port = ((IPEndPoint)l.LocalEndpoint).Port;
         l.Stop();
         return port;
+    }
+
+    static string GetLocalIpAddress()
+    {
+        var host = Dns.GetHostEntry(Dns.GetHostName());
+        foreach (var ip in host.AddressList)
+        {
+            if (ip.AddressFamily == AddressFamily.InterNetwork)
+            {
+                return ip.ToString();
+            }
+        }
+        throw new Exception("No network adapters with an IPv4 address in the system!");
     }
 
     static async Task HandleClientAsync(TcpClient client)
@@ -77,10 +105,10 @@ class ImprovedTcpTunnelServer
 
                     using (TcpClient tunnelClient = new TcpClient())
                     {
-                        await tunnelClient.ConnectAsync(TunnelIp, TunnelPort);
+                        await tunnelClient.ConnectAsync(LocalIp, TunnelPort);
                         using (NetworkStream tunnelStream = tunnelClient.GetStream())
                         {
-                            Console.WriteLine($"Connected to tunnel endpoint at {TunnelIp}:{TunnelPort}. Forwarding traffic...");
+                            Console.WriteLine($"Connected to tunnel endpoint at {LocalIp}:{TunnelPort}. Forwarding traffic...");
                             using (var cts = new CancellationTokenSource())
                             {
                                 Task clientToTunnel = ForwardTrafficAsync(sslStream, tunnelStream, "Client -> Tunnel", cts.Token);
