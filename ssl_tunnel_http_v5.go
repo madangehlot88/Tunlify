@@ -86,23 +86,20 @@ func connectAndForward() error {
 
 	log.Printf("Attempting to connect to server at %s:%s...", serverIP, serverPort)
 
-	if useHTTP {
-		config := &tls.Config{
-			InsecureSkipVerify: true,
-		}
-		serverConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%s", serverIP, serverPort), config)
-	} else {
+	config := &tls.Config{
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS12,
+	}
+
+	if !useHTTP {
 		cert, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
 		if err != nil {
 			return fmt.Errorf("failed to load client certificate: %v", err)
 		}
-
-		config := &tls.Config{
-			Certificates:       []tls.Certificate{cert},
-			InsecureSkipVerify: true,
-		}
-		serverConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%s", serverIP, serverPort), config)
+		config.Certificates = []tls.Certificate{cert}
 	}
+
+	serverConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%s", serverIP, serverPort), config)
 
 	if err != nil {
 		return fmt.Errorf("failed to connect to server: %v", err)
@@ -110,6 +107,7 @@ func connectAndForward() error {
 	defer serverConn.Close()
 
 	log.Println("Connected to server successfully.")
+	log.Printf("Using TLS version: %s", versionToString(serverConn.(*tls.Conn).ConnectionState().Version))
 
 	if !useHTTP {
 		// Send the initial key for the original protocol
@@ -132,10 +130,10 @@ func connectAndForward() error {
 
 	var localConn net.Conn
 	if localHTTPS {
-		config := &tls.Config{
+		localConfig := &tls.Config{
 			InsecureSkipVerify: true, // Note: In production, you should properly verify the certificate
 		}
-		localConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%s", localIP, localPort), config)
+		localConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%s", localIP, localPort), localConfig)
 	} else {
 		localConn, err = net.Dial("tcp", fmt.Sprintf("%s:%s", localIP, localPort))
 	}
@@ -148,17 +146,39 @@ func connectAndForward() error {
 	log.Printf("Connected to local service at %s:%s", localIP, localPort)
 
 	// Forward traffic in both directions
+	errChan := make(chan error, 2)
+
 	go func() {
 		_, err := io.Copy(serverConn, localConn)
-		if err != nil {
-			log.Printf("Error forwarding local to server: %v", err)
-		}
+		errChan <- err
 	}()
 
-	_, err = io.Copy(localConn, serverConn)
-	if err != nil {
-		log.Printf("Error forwarding server to local: %v", err)
+	go func() {
+		_, err := io.Copy(localConn, serverConn)
+		errChan <- err
+	}()
+
+	// Wait for an error or EOF from either direction
+	err = <-errChan
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("error during data transfer: %v", err)
 	}
 
+	log.Println("Connection closed")
 	return nil
+}
+
+func versionToString(version uint16) string {
+	switch version {
+	case tls.VersionTLS10:
+		return "TLS 1.0"
+	case tls.VersionTLS11:
+		return "TLS 1.1"
+	case tls.VersionTLS12:
+		return "TLS 1.2"
+	case tls.VersionTLS13:
+		return "TLS 1.3"
+	default:
+		return fmt.Sprintf("Unknown (%d)", version)
+	}
 }

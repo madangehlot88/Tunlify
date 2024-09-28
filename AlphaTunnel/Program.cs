@@ -79,6 +79,8 @@ class TcpTunnelServer
         {
             try
             {
+                Console.WriteLine($"New connection from: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
+
                 using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
                 {
                     var sslServerAuthOptions = new SslServerAuthenticationOptions
@@ -90,9 +92,26 @@ class TcpTunnelServer
                         RemoteCertificateValidationCallback = ValidateClientCertificate
                     };
 
-                    await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
+                    try
+                    {
+                        await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
+                    }
+                    catch (IOException ioEx)
+                    {
+                        Console.WriteLine($"SSL/TLS handshake failed: {ioEx.Message}");
+                        // Try to read some data to see what the client sent
+                        byte[] buffer = new byte[1024];
+                        int bytesRead = await client.GetStream().ReadAsync(buffer, 0, buffer.Length);
+                        if (bytesRead > 0)
+                        {
+                            Console.WriteLine($"Received data: {BitConverter.ToString(buffer, 0, bytesRead)}");
+                            Console.WriteLine($"As string: {Encoding.ASCII.GetString(buffer, 0, bytesRead)}");
+                        }
+                        return;
+                    }
 
                     Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
+                    Console.WriteLine($"SSL/TLS version: {sslStream.SslProtocol}");
 
                     if (!UseHttp)
                     {
@@ -207,7 +226,6 @@ class TcpTunnelServer
         byte[] expectedKey = new byte[] { 0x00, 0x08, 0x00, 0x00, 0x00, 0x22, 0x4D, 0x00, 0x00, 0x00 };
         return key.AsSpan().SequenceEqual(expectedKey);
     }
-
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
         if (UseHttp)
