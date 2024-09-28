@@ -6,10 +6,13 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Text;
+using System.IO;
 
 class TcpTunnelServer
 {
     private static int ServerPort;
+    private static int LocalPort = 80;
     private static bool UseHttp = false;
     private static bool AllowAllCertificates = false;
     private static List<string> AllowedThumbprints = new List<string>();
@@ -19,7 +22,7 @@ class TcpTunnelServer
     {
         if (args.Length < 1 || !int.TryParse(args[0], out ServerPort))
         {
-            Console.WriteLine("Usage: dotnet run <ServerPort> [--http] [--allow-all-certs] [--allow-thumbprint <thumbprint>]");
+            Console.WriteLine("Usage: dotnet run <ServerPort> [--http] [--local-port <Port>] [--allow-all-certs] [--allow-thumbprint <thumbprint>]");
             return;
         }
 
@@ -30,6 +33,13 @@ class TcpTunnelServer
                 case "--http":
                     UseHttp = true;
                     Console.WriteLine("HTTP mode enabled");
+                    break;
+                case "--local-port":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out int port))
+                    {
+                        LocalPort = port;
+                        Console.WriteLine($"Local port set to: {LocalPort}");
+                    }
                     break;
                 case "--allow-all-certs":
                     AllowAllCertificates = true;
@@ -63,15 +73,6 @@ class TcpTunnelServer
         }
     }
 
-    static int GetAvailablePort()
-    {
-        TcpListener l = new TcpListener(IPAddress.Loopback, 0);
-        l.Start();
-        int port = ((IPEndPoint)l.LocalEndpoint).Port;
-        l.Stop();
-        return port;
-    }
-
     static async Task HandleClientAsync(TcpClient client)
     {
         using (client)
@@ -80,7 +81,16 @@ class TcpTunnelServer
             {
                 using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
                 {
-                    await sslStream.AuthenticateAsServerAsync(ServerCertificate, clientCertificateRequired: !UseHttp, SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false);
+                    var sslServerAuthOptions = new SslServerAuthenticationOptions
+                    {
+                        ServerCertificate = ServerCertificate,
+                        ClientCertificateRequired = !UseHttp,
+                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                        CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                        RemoteCertificateValidationCallback = ValidateClientCertificate
+                    };
+
+                    await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
 
                     Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
 
@@ -97,6 +107,7 @@ class TcpTunnelServer
             catch (Exception ex)
             {
                 Console.WriteLine($"Error handling client: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
             }
         }
     }
@@ -142,27 +153,22 @@ class TcpTunnelServer
 
     static async Task HandleHttpMode(SslStream sslStream)
     {
-        var httpListener = new TcpListener(IPAddress.Any, 0);
-        httpListener.Start();
-        int localPort = ((IPEndPoint)httpListener.LocalEndpoint).Port;
-
-        Console.WriteLine($"Waiting for HTTP connection on port {localPort}");
-
-        using (var httpClient = await httpListener.AcceptTcpClientAsync())
-        using (var httpStream = httpClient.GetStream())
+        using (var localClient = new TcpClient())
         {
-            Console.WriteLine("HTTP client connected. Forwarding traffic...");
+            await localClient.ConnectAsync(IPAddress.Any, LocalPort);
+            using (var localStream = localClient.GetStream())
+            {
+                Console.WriteLine($"Connected to local service on port {LocalPort}. Forwarding traffic...");
 
-            Task clientToHttp = ForwardDataAsync(sslStream, httpStream, "Client -> HTTP");
-            Task httpToClient = ForwardDataAsync(httpStream, sslStream, "HTTP -> Client");
+                Task clientToLocal = ForwardDataAsync(sslStream, localStream, "Client -> Local", true);
+                Task localToClient = ForwardDataAsync(localStream, sslStream, "Local -> Client", false);
 
-            await Task.WhenAny(clientToHttp, httpToClient);
+                await Task.WhenAny(clientToLocal, localToClient);
+            }
         }
-
-        httpListener.Stop();
     }
 
-    static async Task ForwardDataAsync(Stream source, Stream destination, string direction)
+    static async Task ForwardDataAsync(Stream source, Stream destination, string direction, bool modifyHeaders = false)
     {
         byte[] buffer = new byte[4096];
         try
@@ -170,6 +176,13 @@ class TcpTunnelServer
             int bytesRead;
             while ((bytesRead = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
             {
+                if (modifyHeaders && direction == "Client -> Local")
+                {
+                    string data = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                    data = data.Replace($"Host: {ServerCertificate.GetNameInfo(X509NameType.DnsName, false)}:{ServerPort}", $"Host: localhost:{LocalPort}");
+                    buffer = Encoding.ASCII.GetBytes(data);
+                    bytesRead = buffer.Length;
+                }
                 await destination.WriteAsync(buffer, 0, bytesRead);
                 Console.WriteLine($"{direction}: Forwarded {bytesRead} bytes");
             }
@@ -188,6 +201,12 @@ class TcpTunnelServer
 
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
+        if (UseHttp)
+        {
+            Console.WriteLine("HTTP mode: Accepting connection without client certificate.");
+            return true;
+        }
+
         if (AllowAllCertificates)
         {
             Console.WriteLine("Accepting all client certificates as per configuration.");
@@ -204,6 +223,9 @@ class TcpTunnelServer
         string thumbprint = cert2.Thumbprint;
 
         Console.WriteLine($"Received client certificate with thumbprint: {thumbprint}");
+        Console.WriteLine($"Certificate subject: {cert2.Subject}");
+        Console.WriteLine($"Certificate issuer: {cert2.Issuer}");
+        Console.WriteLine($"Certificate valid from: {cert2.NotBefore} to {cert2.NotAfter}");
 
         if (AllowedThumbprints.Contains(thumbprint))
         {
@@ -212,6 +234,7 @@ class TcpTunnelServer
         }
 
         Console.WriteLine($"Client certificate is not in the list of allowed certificates. Thumbprint: {thumbprint}");
+        Console.WriteLine($"SSL Policy Errors: {sslPolicyErrors}");
         return false;
     }
 }
