@@ -81,54 +81,43 @@ class TcpTunnelServer
             {
                 Console.WriteLine($"New connection from: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
 
-                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
+                if (UseHttp)
                 {
-                    var sslServerAuthOptions = new SslServerAuthenticationOptions
+                    // In HTTP mode, we don't need SSL/TLS
+                    Console.WriteLine("HTTP mode: Handling connection without SSL/TLS");
+                    await HandleHttpMode(client.GetStream());
+                }
+                else
+                {
+                    using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
                     {
-                        ServerCertificate = ServerCertificate,
-                        ClientCertificateRequired = !UseHttp,
-                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                        CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
-                        RemoteCertificateValidationCallback = ValidateClientCertificate
-                    };
-
-                    try
-                    {
-                        await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
-                    }
-                    catch (AuthenticationException authEx)
-                    {
-                        Console.WriteLine($"Authentication failed: {authEx.Message}");
-                        if (authEx.InnerException != null)
+                        var sslServerAuthOptions = new SslServerAuthenticationOptions
                         {
-                            Console.WriteLine($"Inner exception: {authEx.InnerException.Message}");
-                        }
-                        return;
-                    }
-                    catch (IOException ioEx)
-                    {
-                        Console.WriteLine($"SSL/TLS handshake failed: {ioEx.Message}");
-                        // Try to read some data to see what the client sent
-                        byte[] buffer = new byte[1024];
-                        int bytesRead = await client.GetStream().ReadAsync(buffer, 0, buffer.Length);
-                        if (bytesRead > 0)
+                            ServerCertificate = ServerCertificate,
+                            ClientCertificateRequired = true,
+                            EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                            CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                            RemoteCertificateValidationCallback = ValidateClientCertificate
+                        };
+
+                        try
                         {
-                            Console.WriteLine($"Received data: {BitConverter.ToString(buffer, 0, bytesRead)}");
-                            Console.WriteLine($"As string: {Encoding.ASCII.GetString(buffer, 0, bytesRead)}");
+                            await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
                         }
-                        return;
-                    }
+                        catch (AuthenticationException authEx)
+                        {
+                            Console.WriteLine($"Authentication failed: {authEx.Message}");
+                            if (authEx.InnerException != null)
+                            {
+                                Console.WriteLine($"Inner exception: {authEx.InnerException.Message}");
+                            }
+                            return;
+                        }
 
-                    Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
-                    Console.WriteLine($"SSL/TLS version: {sslStream.SslProtocol}");
+                        Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
+                        Console.WriteLine($"SSL/TLS version: {sslStream.SslProtocol}");
 
-                    if (!UseHttp)
-                    {
                         await HandleOriginalProtocol(sslStream);
-                    }
-                    else
-                    {
-                        await HandleHttpMode(sslStream);
                     }
                 }
             }
@@ -179,16 +168,14 @@ class TcpTunnelServer
         tunnelListener.Stop();
     }
 
-    static async Task HandleHttpMode(SslStream sslStream)
+    static async Task HandleHttpMode(Stream stream)
     {
         try
         {
             Console.WriteLine("Handling HTTP mode connection...");
 
-            // In this case, we're not connecting to a local service on the server.
-            // Instead, we're just relaying data back and forth.
-            Task clientToServer = ForwardDataAsync(sslStream, sslStream, "Client -> Server", false);
-            Task serverToClient = ForwardDataAsync(sslStream, sslStream, "Server -> Client", false);
+            Task clientToServer = ForwardDataAsync(stream, stream, "Client -> Server", false);
+            Task serverToClient = ForwardDataAsync(stream, stream, "Server -> Client", false);
 
             await Task.WhenAny(clientToServer, serverToClient);
         }
