@@ -7,7 +7,6 @@ using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using System.IO;
 using System.Collections.Generic;
-using System.Text;
 
 class ImprovedTcpTunnelServer
 {
@@ -57,9 +56,11 @@ class ImprovedTcpTunnelServer
 
         try
         {
-            var listener = new TcpListener(IPAddress.Any, ServerPort);
+            var listener = new TcpListener(IPAddress.Any, UseHttp ? ServerPort : TunnelPort);
             listener.Start();
-            Console.WriteLine($"Server listening on port {ServerPort}");
+            Console.WriteLine($"Server listening on port {(UseHttp ? ServerPort : TunnelPort)}");
+            if (!UseHttp)
+                Console.WriteLine($"Forwarding to local service on port {ServerPort}");
 
             while (true)
             {
@@ -117,26 +118,13 @@ class ImprovedTcpTunnelServer
 
     static async Task HandleHttpRequest(SslStream sslStream)
     {
-        using (var reader = new StreamReader(sslStream))
-        using (var writer = new StreamWriter(sslStream))
+        byte[] buffer = new byte[4096];
+        int bytesRead;
+
+        while ((bytesRead = await sslStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
         {
-            string request = await reader.ReadLineAsync();
-            Console.WriteLine($"Received HTTP request: {request}");
-
-            // Read headers
-            while (true)
-            {
-                string line = await reader.ReadLineAsync();
-                if (string.IsNullOrEmpty(line))
-                    break;
-                Console.WriteLine($"Header: {line}");
-            }
-
-            // Send a simple response
-            string response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello from the SSL Tunnel Server!";
-            byte[] responseBytes = Encoding.UTF8.GetBytes(response);
-            await sslStream.WriteAsync(responseBytes, 0, responseBytes.Length);
-            await sslStream.FlushAsync();
+            await sslStream.WriteAsync(buffer, 0, bytesRead);
+            Console.WriteLine($"Forwarded {bytesRead} bytes");
         }
     }
 
@@ -181,6 +169,7 @@ class ImprovedTcpTunnelServer
 
         serverListener.Stop();
     }
+
     static async Task ForwardTrafficAsync(Stream source, Stream destination, string direction)
     {
         byte[] buffer = new byte[8192];
@@ -196,7 +185,6 @@ class ImprovedTcpTunnelServer
         }
         catch (IOException)
         {
-            // The client has disconnected
             Console.WriteLine($"{direction}: Connection closed");
         }
         catch (Exception ex)
