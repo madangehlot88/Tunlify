@@ -176,6 +176,8 @@ class TcpTunnelServer
         {
             Console.WriteLine("Handling HTTP mode connection...");
 
+            // In this case, we're not connecting to a local service on the server.
+            // Instead, we're just relaying data back and forth.
             Task clientToServer = ForwardDataAsync(sslStream, sslStream, "Client -> Server", false);
             Task serverToClient = ForwardDataAsync(sslStream, sslStream, "Server -> Client", false);
 

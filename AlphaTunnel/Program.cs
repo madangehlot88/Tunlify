@@ -96,6 +96,15 @@ class TcpTunnelServer
                     {
                         await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
                     }
+                    catch (AuthenticationException authEx)
+                    {
+                        Console.WriteLine($"Authentication failed: {authEx.Message}");
+                        if (authEx.InnerException != null)
+                        {
+                            Console.WriteLine($"Inner exception: {authEx.InnerException.Message}");
+                        }
+                        return;
+                    }
                     catch (IOException ioEx)
                     {
                         Console.WriteLine($"SSL/TLS handshake failed: {ioEx.Message}");
@@ -215,6 +224,8 @@ class TcpTunnelServer
     }
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
+        Console.WriteLine($"Validating client certificate. SSL Policy Errors: {sslPolicyErrors}");
+
         if (UseHttp)
         {
             Console.WriteLine("HTTP mode: Accepting connection without client certificate.");
@@ -248,7 +259,6 @@ class TcpTunnelServer
         }
 
         Console.WriteLine($"Client certificate is not in the list of allowed certificates. Thumbprint: {thumbprint}");
-        Console.WriteLine($"SSL Policy Errors: {sslPolicyErrors}");
         return false;
     }
 }
