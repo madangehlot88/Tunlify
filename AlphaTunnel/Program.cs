@@ -153,18 +153,27 @@ class TcpTunnelServer
 
     static async Task HandleHttpMode(SslStream sslStream)
     {
-        using (var localClient = new TcpClient())
+        try
         {
-            await localClient.ConnectAsync(IPAddress.Any, LocalPort);
-            using (var localStream = localClient.GetStream())
+            using (var localClient = new TcpClient())
             {
-                Console.WriteLine($"Connected to local service on port {LocalPort}. Forwarding traffic...");
+                Console.WriteLine($"Attempting to connect to local service on port {LocalPort}...");
+                await localClient.ConnectAsync(IPAddress.Loopback, LocalPort);
+                using (var localStream = localClient.GetStream())
+                {
+                    Console.WriteLine($"Connected to local service on port {LocalPort}. Forwarding traffic...");
 
-                Task clientToLocal = ForwardDataAsync(sslStream, localStream, "Client -> Local", true);
-                Task localToClient = ForwardDataAsync(localStream, sslStream, "Local -> Client", false);
+                    Task clientToLocal = ForwardDataAsync(sslStream, localStream, "Client -> Local", true);
+                    Task localToClient = ForwardDataAsync(localStream, sslStream, "Local -> Client", false);
 
-                await Task.WhenAny(clientToLocal, localToClient);
+                    await Task.WhenAny(clientToLocal, localToClient);
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error connecting to local service: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
         }
     }
 
