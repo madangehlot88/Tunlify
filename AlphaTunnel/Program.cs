@@ -4,9 +4,9 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
-using System.Threading;
 using System.Threading.Tasks;
 using System.IO;
+using System.Collections.Generic;
 using System.Text;
 
 class ImprovedTcpTunnelServer
@@ -57,10 +57,9 @@ class ImprovedTcpTunnelServer
 
         try
         {
-            var listener = new TcpListener(IPAddress.Any, TunnelPort);
+            var listener = new TcpListener(IPAddress.Any, ServerPort);
             listener.Start();
-            Console.WriteLine($"Tunnel listening on port {TunnelPort}");
-            Console.WriteLine($"Forwarding to local service on port {ServerPort}");
+            Console.WriteLine($"Server listening on port {ServerPort}");
 
             while (true)
             {
@@ -82,13 +81,14 @@ class ImprovedTcpTunnelServer
         l.Stop();
         return port;
     }
+
     static async Task HandleClientAsync(TcpClient client)
     {
         using (client)
         {
             try
             {
-                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, SelectServerCertificate))
+                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
                 {
                     await sslStream.AuthenticateAsServerAsync(ServerCertificate, clientCertificateRequired: true, SslProtocols.Tls12, checkCertificateRevocation: true);
 
@@ -123,21 +123,6 @@ class ImprovedTcpTunnelServer
             string request = await reader.ReadLineAsync();
             Console.WriteLine($"Received HTTP request: {request}");
 
-            // Parse the request (this is a very basic parser and should be more robust in production)
-            string[] parts = request.Split(' ');
-            if (parts.Length < 2)
-            {
-                await writer.WriteLineAsync("HTTP/1.1 400 Bad Request");
-                await writer.WriteLineAsync("Content-Type: text/plain");
-                await writer.WriteLineAsync();
-                await writer.WriteLineAsync("Invalid request");
-                await writer.FlushAsync();
-                return;
-            }
-
-            string method = parts[0];
-            string path = parts[1];
-
             // Read headers
             while (true)
             {
@@ -147,13 +132,11 @@ class ImprovedTcpTunnelServer
                 Console.WriteLine($"Header: {line}");
             }
 
-            // Here you would typically process the request and generate a response
-            // For this example, we'll just send a simple response
-            await writer.WriteLineAsync("HTTP/1.1 200 OK");
-            await writer.WriteLineAsync("Content-Type: text/plain");
-            await writer.WriteLineAsync();
-            await writer.WriteLineAsync($"Received {method} request for {path}");
-            await writer.FlushAsync();
+            // Send a simple response
+            string response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello from the SSL Tunnel Server!";
+            byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+            await sslStream.WriteAsync(responseBytes, 0, responseBytes.Length);
+            await sslStream.FlushAsync();
         }
     }
 
@@ -198,7 +181,6 @@ class ImprovedTcpTunnelServer
 
         serverListener.Stop();
     }
-
     static async Task ForwardTrafficAsync(Stream source, Stream destination, string direction)
     {
         byte[] buffer = new byte[8192];
@@ -251,7 +233,6 @@ class ImprovedTcpTunnelServer
         Console.WriteLine($"Client certificate is not in the list of allowed certificates. Thumbprint: {thumbprint}");
         return false;
     }
-
     private static X509Certificate SelectServerCertificate(object sender, string hostName, X509CertificateCollection localCertificates, X509Certificate remoteCertificate, string[] acceptableIssuers)
     {
         // Here you can implement logic to select the appropriate server certificate
