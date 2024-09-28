@@ -79,6 +79,8 @@ class TcpTunnelServer
         {
             try
             {
+                Console.WriteLine($"New connection from: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
+
                 using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
                 {
                     var sslServerAuthOptions = new SslServerAuthenticationOptions
@@ -90,9 +92,26 @@ class TcpTunnelServer
                         RemoteCertificateValidationCallback = ValidateClientCertificate
                     };
 
-                    await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
+                    try
+                    {
+                        await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
+                    }
+                    catch (IOException ioEx)
+                    {
+                        Console.WriteLine($"SSL/TLS handshake failed: {ioEx.Message}");
+                        // Try to read some data to see what the client sent
+                        byte[] buffer = new byte[1024];
+                        int bytesRead = await client.GetStream().ReadAsync(buffer, 0, buffer.Length);
+                        if (bytesRead > 0)
+                        {
+                            Console.WriteLine($"Received data: {BitConverter.ToString(buffer, 0, bytesRead)}");
+                            Console.WriteLine($"As string: {Encoding.ASCII.GetString(buffer, 0, bytesRead)}");
+                        }
+                        return;
+                    }
 
                     Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
+                    Console.WriteLine($"SSL/TLS version: {sslStream.SslProtocol}");
 
                     if (!UseHttp)
                     {
@@ -155,24 +174,16 @@ class TcpTunnelServer
     {
         try
         {
-            using (var localClient = new TcpClient())
-            {
-                Console.WriteLine($"Attempting to connect to local service on port {LocalPort}...");
-                await localClient.ConnectAsync(IPAddress.Loopback, LocalPort);
-                using (var localStream = localClient.GetStream())
-                {
-                    Console.WriteLine($"Connected to local service on port {LocalPort}. Forwarding traffic...");
+            Console.WriteLine("Handling HTTP mode connection...");
 
-                    Task clientToLocal = ForwardDataAsync(sslStream, localStream, "Client -> Local", true);
-                    Task localToClient = ForwardDataAsync(localStream, sslStream, "Local -> Client", false);
+            Task clientToServer = ForwardDataAsync(sslStream, sslStream, "Client -> Server", false);
+            Task serverToClient = ForwardDataAsync(sslStream, sslStream, "Server -> Client", false);
 
-                    await Task.WhenAny(clientToLocal, localToClient);
-                }
-            }
+            await Task.WhenAny(clientToServer, serverToClient);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error connecting to local service: {ex.Message}");
+            Console.WriteLine($"Error in HTTP mode: {ex.Message}");
             Console.WriteLine($"Stack trace: {ex.StackTrace}");
         }
     }
@@ -185,13 +196,6 @@ class TcpTunnelServer
             int bytesRead;
             while ((bytesRead = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
             {
-                if (modifyHeaders && direction == "Client -> Local")
-                {
-                    string data = Encoding.ASCII.GetString(buffer, 0, bytesRead);
-                    data = data.Replace($"Host: {ServerCertificate.GetNameInfo(X509NameType.DnsName, false)}:{ServerPort}", $"Host: localhost:{LocalPort}");
-                    buffer = Encoding.ASCII.GetBytes(data);
-                    bytesRead = buffer.Length;
-                }
                 await destination.WriteAsync(buffer, 0, bytesRead);
                 Console.WriteLine($"{direction}: Forwarded {bytesRead} bytes");
             }
@@ -207,7 +211,6 @@ class TcpTunnelServer
         byte[] expectedKey = new byte[] { 0x00, 0x08, 0x00, 0x00, 0x00, 0x22, 0x4D, 0x00, 0x00, 0x00 };
         return key.AsSpan().SequenceEqual(expectedKey);
     }
-
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
         if (UseHttp)

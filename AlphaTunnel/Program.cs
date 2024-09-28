@@ -176,10 +176,17 @@ class TcpTunnelServer
         {
             Console.WriteLine("Handling HTTP mode connection...");
 
-            Task clientToServer = ForwardDataAsync(sslStream, sslStream, "Client -> Server", false);
-            Task serverToClient = ForwardDataAsync(sslStream, sslStream, "Server -> Client", false);
+            using (var localClient = new TcpClient())
+            {
+                await localClient.ConnectAsync(IPAddress.Loopback, LocalPort);
+                using (var localStream = localClient.GetStream())
+                {
+                    Task clientToLocal = ForwardDataAsync(sslStream, localStream, "Client -> Local", true);
+                    Task localToClient = ForwardDataAsync(localStream, sslStream, "Local -> Client", false);
 
-            await Task.WhenAny(clientToServer, serverToClient);
+                    await Task.WhenAny(clientToLocal, localToClient);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -196,6 +203,13 @@ class TcpTunnelServer
             int bytesRead;
             while ((bytesRead = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
             {
+                if (modifyHeaders && direction == "Client -> Local")
+                {
+                    string data = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                    data = data.Replace($"Host: {ServerCertificate.GetNameInfo(X509NameType.DnsName, false)}:{ServerPort}", $"Host: localhost:{LocalPort}");
+                    buffer = Encoding.ASCII.GetBytes(data);
+                    bytesRead = buffer.Length;
+                }
                 await destination.WriteAsync(buffer, 0, bytesRead);
                 Console.WriteLine($"{direction}: Forwarded {bytesRead} bytes");
             }
