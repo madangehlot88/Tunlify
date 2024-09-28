@@ -5,32 +5,21 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
-using System.IO;
 using System.Collections.Generic;
 
-class ImprovedTcpTunnelServer
+class TcpTunnelServer
 {
-    private static int TunnelPort = 5900;
     private static int ServerPort;
-    private static string LocalIP;
-    private static int LocalPort;
     private static bool UseHttp = false;
     private static bool AllowAllCertificates = false;
     private static List<string> AllowedThumbprints = new List<string>();
-
     private static readonly X509Certificate2 ServerCertificate = new X509Certificate2("server.pfx", "1234");
 
     static async Task Main(string[] args)
     {
-        if (args.Length < 1)
+        if (args.Length < 1 || !int.TryParse(args[0], out ServerPort))
         {
-            Console.WriteLine("Usage: dotnet run <ServerPort> [--http <LocalIP> <LocalPort>] [--allow-all-certs] [--allow-thumbprint <thumbprint>]");
-            return;
-        }
-
-        if (!int.TryParse(args[0], out ServerPort))
-        {
-            Console.WriteLine("Invalid ServerPort. Please provide a valid port number.");
+            Console.WriteLine("Usage: dotnet run <ServerPort> [--http] [--allow-all-certs] [--allow-thumbprint <thumbprint>]");
             return;
         }
 
@@ -39,22 +28,8 @@ class ImprovedTcpTunnelServer
             switch (args[i])
             {
                 case "--http":
-                    if (i + 2 < args.Length)
-                    {
-                        UseHttp = true;
-                        LocalIP = args[++i];
-                        if (!int.TryParse(args[++i], out LocalPort))
-                        {
-                            Console.WriteLine("Invalid LocalPort. Please provide a valid port number.");
-                            return;
-                        }
-                        Console.WriteLine($"HTTP mode enabled, forwarding to {LocalIP}:{LocalPort}");
-                    }
-                    else
-                    {
-                        Console.WriteLine("--http requires LocalIP and LocalPort arguments.");
-                        return;
-                    }
+                    UseHttp = true;
+                    Console.WriteLine("HTTP mode enabled");
                     break;
                 case "--allow-all-certs":
                     AllowAllCertificates = true;
@@ -72,11 +47,9 @@ class ImprovedTcpTunnelServer
 
         try
         {
-            var listener = new TcpListener(IPAddress.Any, UseHttp ? ServerPort : TunnelPort);
+            var listener = new TcpListener(IPAddress.Any, ServerPort);
             listener.Start();
-            Console.WriteLine($"Server listening on port {(UseHttp ? ServerPort : TunnelPort)}");
-            if (!UseHttp)
-                Console.WriteLine($"Forwarding to local service on port {ServerPort}");
+            Console.WriteLine($"Server listening on port {ServerPort}");
 
             while (true)
             {
@@ -105,102 +78,99 @@ class ImprovedTcpTunnelServer
         {
             try
             {
-                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, null, EncryptionPolicy.AllowNoEncryption))
+                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
                 {
-                    await sslStream.AuthenticateAsServerAsync(ServerCertificate, clientCertificateRequired: !UseHttp, SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: true);
+                    await sslStream.AuthenticateAsServerAsync(ServerCertificate, clientCertificateRequired: !UseHttp, SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false);
 
-                    Console.WriteLine($"Cipher: {sslStream.CipherAlgorithm} strength {sslStream.CipherStrength}");
-                    Console.WriteLine($"Hash: {sslStream.HashAlgorithm} strength {sslStream.HashStrength}");
-                    Console.WriteLine($"Key exchange: {sslStream.KeyExchangeAlgorithm} strength {sslStream.KeyExchangeStrength}");
-                    Console.WriteLine($"Protocol: {sslStream.SslProtocol}");
+                    Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
 
-                    if (UseHttp)
+                    if (!UseHttp)
                     {
-                        await HandleHttpRequest(sslStream);
+                        await HandleOriginalProtocol(sslStream);
                     }
                     else
                     {
-                        await HandleOriginalProtocol(sslStream, client);
+                        await HandleHttpMode(sslStream);
                     }
                 }
-            }
-            catch (AuthenticationException ex)
-            {
-                Console.WriteLine($"SSL/TLS authentication failed: {ex.Message}");
-                Console.WriteLine($"Inner Exception: {ex.InnerException?.Message}");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error handling client: {ex.Message}");
-                Console.WriteLine($"Inner Exception: {ex.InnerException?.Message}");
             }
         }
     }
 
-    static async Task HandleHttpRequest(SslStream sslStream)
+    static async Task HandleOriginalProtocol(SslStream sslStream)
     {
-        using (var client = new TcpClient(LocalIP, LocalPort))
-        using (var stream = client.GetStream())
-        {
-            await Task.WhenAny(
-                sslStream.CopyToAsync(stream),
-                stream.CopyToAsync(sslStream)
-            );
-        }
-    }
+        byte[] buffer = new byte[10];
+        await sslStream.ReadAsync(buffer, 0, buffer.Length);
 
-    static async Task HandleOriginalProtocol(SslStream sslStream, TcpClient client)
-    {
-        // Read the key
-        byte[] keyBuffer = new byte[10];
-        await sslStream.ReadAsync(keyBuffer, 0, keyBuffer.Length);
-
-        if (!VerifyKey(keyBuffer))
+        if (!VerifyKey(buffer))
         {
             Console.WriteLine("Invalid key received. Closing connection.");
             return;
         }
 
-        // Send back the client's IP address and the tunnel port
-        byte[] ipBytes = ((IPEndPoint)client.Client.RemoteEndPoint).Address.GetAddressBytes();
-        byte[] portBytes = BitConverter.GetBytes(TunnelPort);
-        byte[] response = new byte[20]; // 16 bytes for IP, 4 bytes for port
-        Array.Copy(ipBytes, 0, response, 0, ipBytes.Length);
-        Array.Copy(portBytes, 0, response, 16, 4);
+        Console.WriteLine("Valid key received.");
+
+        int tunnelPort = 5900; // You can change this or make it dynamic
+        byte[] response = new byte[20];
+        Array.Copy(BitConverter.GetBytes(tunnelPort), 0, response, 16, 4);
         await sslStream.WriteAsync(response, 0, response.Length);
 
-        Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
+        Console.WriteLine($"Sent tunnel port: {tunnelPort}");
 
-        // Wait for a connection on the ServerPort
-        TcpListener serverListener = new TcpListener(IPAddress.Any, ServerPort);
-        serverListener.Start();
-        Console.WriteLine($"Waiting for local service connection on port {ServerPort}");
+        var tunnelListener = new TcpListener(IPAddress.Any, tunnelPort);
+        tunnelListener.Start();
 
-        using (TcpClient serverClient = await serverListener.AcceptTcpClientAsync())
-        using (NetworkStream serverStream = serverClient.GetStream())
+        Console.WriteLine($"Waiting for tunnel connection on port {tunnelPort}");
+
+        using (var tunnelClient = await tunnelListener.AcceptTcpClientAsync())
+        using (var tunnelStream = tunnelClient.GetStream())
         {
-            Console.WriteLine($"Local service connected on port {ServerPort}. Forwarding traffic...");
+            Console.WriteLine("Tunnel client connected. Forwarding traffic...");
 
-            // Forward traffic in both directions
-            Task clientToServer = ForwardTrafficAsync(sslStream, serverStream, "Client -> Server");
-            Task serverToClient = ForwardTrafficAsync(serverStream, sslStream, "Server -> Client");
+            Task clientToTunnel = ForwardDataAsync(sslStream, tunnelStream, "Client -> Tunnel");
+            Task tunnelToClient = ForwardDataAsync(tunnelStream, sslStream, "Tunnel -> Client");
 
-            await Task.WhenAny(clientToServer, serverToClient);
+            await Task.WhenAny(clientToTunnel, tunnelToClient);
         }
 
-        serverListener.Stop();
+        tunnelListener.Stop();
     }
 
-    static async Task ForwardTrafficAsync(Stream source, Stream destination, string direction)
+    static async Task HandleHttpMode(SslStream sslStream)
     {
-        byte[] buffer = new byte[8192];
+        var httpListener = new TcpListener(IPAddress.Any, 0);
+        httpListener.Start();
+        int localPort = ((IPEndPoint)httpListener.LocalEndpoint).Port;
+
+        Console.WriteLine($"Waiting for HTTP connection on port {localPort}");
+
+        using (var httpClient = await httpListener.AcceptTcpClientAsync())
+        using (var httpStream = httpClient.GetStream())
+        {
+            Console.WriteLine("HTTP client connected. Forwarding traffic...");
+
+            Task clientToHttp = ForwardDataAsync(sslStream, httpStream, "Client -> HTTP");
+            Task httpToClient = ForwardDataAsync(httpStream, sslStream, "HTTP -> Client");
+
+            await Task.WhenAny(clientToHttp, httpToClient);
+        }
+
+        httpListener.Stop();
+    }
+
+    static async Task ForwardDataAsync(Stream source, Stream destination, string direction)
+    {
+        byte[] buffer = new byte[4096];
         try
         {
             int bytesRead;
             while ((bytesRead = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
             {
                 await destination.WriteAsync(buffer, 0, bytesRead);
-                await destination.FlushAsync();
                 Console.WriteLine($"{direction}: Forwarded {bytesRead} bytes");
             }
         }
@@ -208,10 +178,12 @@ class ImprovedTcpTunnelServer
         {
             Console.WriteLine($"{direction}: Connection closed");
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error in {direction}: {ex.Message}");
-        }
+    }
+
+    static bool VerifyKey(byte[] key)
+    {
+        byte[] expectedKey = new byte[] { 0x00, 0x08, 0x00, 0x00, 0x00, 0x22, 0x4D, 0x00, 0x00, 0x00 };
+        return key.AsSpan().SequenceEqual(expectedKey);
     }
 
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
@@ -232,9 +204,6 @@ class ImprovedTcpTunnelServer
         string thumbprint = cert2.Thumbprint;
 
         Console.WriteLine($"Received client certificate with thumbprint: {thumbprint}");
-        Console.WriteLine($"Certificate subject: {cert2.Subject}");
-        Console.WriteLine($"Certificate issuer: {cert2.Issuer}");
-        Console.WriteLine($"Certificate valid from: {cert2.NotBefore} to {cert2.NotAfter}");
 
         if (AllowedThumbprints.Contains(thumbprint))
         {
@@ -243,20 +212,6 @@ class ImprovedTcpTunnelServer
         }
 
         Console.WriteLine($"Client certificate is not in the list of allowed certificates. Thumbprint: {thumbprint}");
-        Console.WriteLine($"SSL Policy Errors: {sslPolicyErrors}");
         return false;
-    }
-
-    private static X509Certificate SelectServerCertificate(object sender, string hostName, X509CertificateCollection localCertificates, X509Certificate remoteCertificate, string[] acceptableIssuers)
-    {
-        // Here you can implement logic to select the appropriate server certificate
-        // For now, we're just returning the single server certificate we loaded
-        return ServerCertificate;
-    }
-
-    private static bool VerifyKey(byte[] key)
-    {
-        byte[] expectedKey = new byte[] { 0, 8, 0, 0, 0, 34, 77, 0, 0, 0 };
-        return key.AsSpan().SequenceEqual(expectedKey);
     }
 }
