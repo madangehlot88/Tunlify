@@ -11,9 +11,11 @@ using System.Text;
 
 class ImprovedTcpTunnelServer
 {
-    private static int TunnelPort = 5900;  // This is the port the TcpListener will use
-    private static int ServerPort;  // This will be set from command-line arguments
-    private static bool UseHttp = false;  // Flag to determine if we should handle HTTP requests
+    private static int TunnelPort = 5900;
+    private static int ServerPort;
+    private static bool UseHttp = false;
+    private static bool AllowAllCertificates = false;
+    private static List<string> AllowedThumbprints = new List<string>();
 
     private static readonly X509Certificate2 ServerCertificate = new X509Certificate2("server.pfx", "1234");
 
@@ -21,7 +23,7 @@ class ImprovedTcpTunnelServer
     {
         if (args.Length < 1)
         {
-            Console.WriteLine("Usage: dotnet run <ServerPort> [--http]");
+            Console.WriteLine("Usage: dotnet run <ServerPort> [--http] [--allow-all-certs] [--allow-thumbprint <thumbprint>]");
             return;
         }
 
@@ -31,10 +33,26 @@ class ImprovedTcpTunnelServer
             return;
         }
 
-        if (args.Length > 1 && args[1] == "--http")
+        for (int i = 1; i < args.Length; i++)
         {
-            UseHttp = true;
-            Console.WriteLine("HTTP mode enabled");
+            switch (args[i])
+            {
+                case "--http":
+                    UseHttp = true;
+                    Console.WriteLine("HTTP mode enabled");
+                    break;
+                case "--allow-all-certs":
+                    AllowAllCertificates = true;
+                    Console.WriteLine("Allowing all client certificates");
+                    break;
+                case "--allow-thumbprint":
+                    if (i + 1 < args.Length)
+                    {
+                        AllowedThumbprints.Add(args[++i].ToUpper());
+                        Console.WriteLine($"Added allowed thumbprint: {args[i]}");
+                    }
+                    break;
+            }
         }
 
         try
@@ -207,42 +225,31 @@ class ImprovedTcpTunnelServer
 
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
-        // Convert the certificate to X509Certificate2
-        X509Certificate2 cert2 = new X509Certificate2(certificate);
-
-        //// Log certificate details
-        //Console.WriteLine($"Client Certificate Details:");
-        //Console.WriteLine($"Subject: {cert2.Subject}");
-        //Console.WriteLine($"Issuer: {cert2.Issuer}");
-        //Console.WriteLine($"Thumbprint: {cert2.Thumbprint}");
-        //Console.WriteLine($"Not Before: {cert2.NotBefore}");
-        //Console.WriteLine($"Not After: {cert2.NotAfter}");
-
-        //// For testing purposes, accept all client certificates
-        //// WARNING: This is not secure for production use!
-        //Console.WriteLine("Accepting all client certificates for testing purposes.");
-        //return true;
-
-        // Define the allowed thumbprint(s)
-        string[] allowedThumbprints = { "B009F424AB0683DD7BF68BA98193132B5A298814" };
-
-        // Check if the certificate's thumbprint is in the list of allowed thumbprints
-        if (!allowedThumbprints.Contains(cert2.Thumbprint))
+        if (AllowAllCertificates)
         {
-            Console.WriteLine($"Client certificate is not in the list of allowed certificates. Thumbprint: {cert2.Thumbprint}");
-            return false;
-        }
-
-        // Ignore chain validation errors for self-signed certificates
-        if (sslPolicyErrors == SslPolicyErrors.RemoteCertificateChainErrors)
-        {
-            Console.WriteLine("Ignoring chain validation errors for self-signed certificate.");
+            Console.WriteLine("Accepting all client certificates as per configuration.");
             return true;
         }
 
-        // If we get here, the certificate is valid
-        Console.WriteLine("Client certificate validated successfully.");
-        return true;
+        if (certificate == null)
+        {
+            Console.WriteLine("Client didn't provide a certificate.");
+            return false;
+        }
+
+        X509Certificate2 cert2 = new X509Certificate2(certificate);
+        string thumbprint = cert2.Thumbprint;
+
+        Console.WriteLine($"Received client certificate with thumbprint: {thumbprint}");
+
+        if (AllowedThumbprints.Contains(thumbprint))
+        {
+            Console.WriteLine("Client certificate is in the list of allowed certificates.");
+            return true;
+        }
+
+        Console.WriteLine($"Client certificate is not in the list of allowed certificates. Thumbprint: {thumbprint}");
+        return false;
     }
 
     private static X509Certificate SelectServerCertificate(object sender, string hostName, X509CertificateCollection localCertificates, X509Certificate remoteCertificate, string[] acceptableIssuers)
