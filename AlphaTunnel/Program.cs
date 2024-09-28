@@ -12,6 +12,8 @@ class ImprovedTcpTunnelServer
 {
     private static int TunnelPort = 5900;
     private static int ServerPort;
+    private static string LocalIP;
+    private static int LocalPort;
     private static bool UseHttp = false;
     private static bool AllowAllCertificates = false;
     private static List<string> AllowedThumbprints = new List<string>();
@@ -22,7 +24,7 @@ class ImprovedTcpTunnelServer
     {
         if (args.Length < 1)
         {
-            Console.WriteLine("Usage: dotnet run <ServerPort> [--http] [--allow-all-certs] [--allow-thumbprint <thumbprint>]");
+            Console.WriteLine("Usage: dotnet run <ServerPort> [--http <LocalIP> <LocalPort>] [--allow-all-certs] [--allow-thumbprint <thumbprint>]");
             return;
         }
 
@@ -37,8 +39,22 @@ class ImprovedTcpTunnelServer
             switch (args[i])
             {
                 case "--http":
-                    UseHttp = true;
-                    Console.WriteLine("HTTP mode enabled");
+                    if (i + 2 < args.Length)
+                    {
+                        UseHttp = true;
+                        LocalIP = args[++i];
+                        if (!int.TryParse(args[++i], out LocalPort))
+                        {
+                            Console.WriteLine("Invalid LocalPort. Please provide a valid port number.");
+                            return;
+                        }
+                        Console.WriteLine($"HTTP mode enabled, forwarding to {LocalIP}:{LocalPort}");
+                    }
+                    else
+                    {
+                        Console.WriteLine("--http requires LocalIP and LocalPort arguments.");
+                        return;
+                    }
                     break;
                 case "--allow-all-certs":
                     AllowAllCertificates = true;
@@ -89,30 +105,21 @@ class ImprovedTcpTunnelServer
         {
             try
             {
-                if (UseHttp)
+                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, null, EncryptionPolicy.AllowNoEncryption))
                 {
-                    await HandleHttpRequest(client.GetStream());
-                }
-                else
-                {
-                    using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, null, EncryptionPolicy.AllowNoEncryption))
+                    await sslStream.AuthenticateAsServerAsync(ServerCertificate, clientCertificateRequired: !UseHttp, SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: true);
+
+                    Console.WriteLine($"Cipher: {sslStream.CipherAlgorithm} strength {sslStream.CipherStrength}");
+                    Console.WriteLine($"Hash: {sslStream.HashAlgorithm} strength {sslStream.HashStrength}");
+                    Console.WriteLine($"Key exchange: {sslStream.KeyExchangeAlgorithm} strength {sslStream.KeyExchangeStrength}");
+                    Console.WriteLine($"Protocol: {sslStream.SslProtocol}");
+
+                    if (UseHttp)
                     {
-                        var sslServerAuthOptions = new SslServerAuthenticationOptions
-                        {
-                            ServerCertificate = ServerCertificate,
-                            ClientCertificateRequired = true,
-                            EnabledSslProtocols = SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13,
-                            CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
-                            RemoteCertificateValidationCallback = ValidateClientCertificate
-                        };
-
-                        await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
-
-                        Console.WriteLine($"Cipher: {sslStream.CipherAlgorithm} strength {sslStream.CipherStrength}");
-                        Console.WriteLine($"Hash: {sslStream.HashAlgorithm} strength {sslStream.HashStrength}");
-                        Console.WriteLine($"Key exchange: {sslStream.KeyExchangeAlgorithm} strength {sslStream.KeyExchangeStrength}");
-                        Console.WriteLine($"Protocol: {sslStream.SslProtocol}");
-
+                        await HandleHttpRequest(sslStream);
+                    }
+                    else
+                    {
                         await HandleOriginalProtocol(sslStream, client);
                     }
                 }
@@ -121,10 +128,6 @@ class ImprovedTcpTunnelServer
             {
                 Console.WriteLine($"SSL/TLS authentication failed: {ex.Message}");
                 Console.WriteLine($"Inner Exception: {ex.InnerException?.Message}");
-                if (ex.InnerException is System.ComponentModel.Win32Exception win32Ex)
-                {
-                    Console.WriteLine($"Win32 error code: {win32Ex.NativeErrorCode}");
-                }
             }
             catch (Exception ex)
             {
@@ -134,15 +137,15 @@ class ImprovedTcpTunnelServer
         }
     }
 
-    static async Task HandleHttpRequest(Stream clientStream)
+    static async Task HandleHttpRequest(SslStream sslStream)
     {
-        byte[] buffer = new byte[4096];
-        int bytesRead;
-
-        while ((bytesRead = await clientStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+        using (var client = new TcpClient(LocalIP, LocalPort))
+        using (var stream = client.GetStream())
         {
-            await clientStream.WriteAsync(buffer, 0, bytesRead);
-            Console.WriteLine($"Forwarded {bytesRead} bytes");
+            await Task.WhenAny(
+                sslStream.CopyToAsync(stream),
+                stream.CopyToAsync(sslStream)
+            );
         }
     }
 
