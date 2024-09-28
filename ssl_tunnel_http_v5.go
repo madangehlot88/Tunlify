@@ -76,29 +76,32 @@ func main() {
 }
 
 func connectAndForward() error {
-	var serverConn net.Conn
-	var err error
+    var serverConn net.Conn
+    var err error
 
-	log.Printf("Attempting to connect to server at %s:%s...", serverIP, serverPort)
+    log.Printf("Attempting to connect to server at %s:%s...", serverIP, serverPort)
 
-	config := &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS12,
-	}
+    if useHTTP {
+        serverConn, err = net.Dial("tcp", fmt.Sprintf("%s:%s", serverIP, serverPort))
+    } else {
+        config := &tls.Config{
+            InsecureSkipVerify: true,
+            MinVersion:         tls.VersionTLS12,
+        }
+        cert, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
+        if err != nil {
+            return fmt.Errorf("failed to load client certificate: %v", err)
+        }
+        config.Certificates = []tls.Certificate{cert}
+        serverConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%s", serverIP, serverPort), config)
+    }
 
-	if !useHTTP {
-		cert, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
-		if err != nil {
-			return fmt.Errorf("failed to load client certificate: %v", err)
-		}
-		config.Certificates = []tls.Certificate{cert}
-	}
+    if err != nil {
+        return fmt.Errorf("failed to connect to server: %v", err)
+    }
+    defer serverConn.Close()
 
-	serverConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%s", serverIP, serverPort), config)
-	if err != nil {
-		return fmt.Errorf("failed to connect to server: %v", err)
-	}
-	defer serverConn.Close()
+    log.Println("Connected to server successfully.")
 
 	log.Println("Connected to server successfully.")
 	log.Printf("Using TLS version: %s", versionToString(serverConn.(*tls.Conn).ConnectionState().Version))
