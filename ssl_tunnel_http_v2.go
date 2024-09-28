@@ -41,8 +41,12 @@ func init() {
 func main() {
 	flag.Parse()
 
-	if serverIP == "" || serverPort == "" || localIP == "" || localPort == "" || clientCertPath == "" || clientKeyPath == "" {
-		log.Fatal("All parameters must be provided. Use -h for help.")
+	if serverIP == "" || serverPort == "" || localIP == "" || localPort == "" {
+		log.Fatal("Server IP, server port, local IP, and local port must be provided. Use -h for help.")
+	}
+
+	if !useHTTP && (clientCertPath == "" || clientKeyPath == "") {
+		log.Fatal("Client certificate and key must be provided for non-HTTP mode. Use -h for help.")
 	}
 
 	// Set up logging
@@ -75,23 +79,38 @@ func main() {
 }
 
 func connectAndForward() error {
-	cert, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
-	if err != nil {
-		return fmt.Errorf("failed to load client certificate: %v", err)
+	var serverConn net.Conn
+	var err error
+
+	if useHTTP {
+		serverConn, err = net.Dial("tcp", serverIP+":"+serverPort)
+	} else {
+		cert, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
+		if err != nil {
+			return fmt.Errorf("failed to load client certificate: %v", err)
+		}
+
+		config := &tls.Config{
+			Certificates:       []tls.Certificate{cert},
+			InsecureSkipVerify: true,
+			MinVersion:         tls.VersionTLS10,
+			MaxVersion:         tls.VersionTLS13,
+		}
+
+		serverConn, err = tls.Dial("tcp", serverIP+":"+serverPort, config)
+		if err == nil {
+			tlsConn := serverConn.(*tls.Conn)
+			log.Printf("Connected to server using %s", tlsConn.ConnectionState().Version)
+			log.Printf("Cipher suite: %s", tls.CipherSuiteName(tlsConn.ConnectionState().CipherSuite))
+		}
 	}
 
-	config := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
-	}
-
-	serverConn, err := tls.Dial("tcp", serverIP+":"+serverPort, config)
 	if err != nil {
 		return fmt.Errorf("failed to connect to server: %v", err)
 	}
 	defer serverConn.Close()
 
-	log.Println("Connected to server and SSL handshake completed.")
+	log.Println("Connected to server.")
 
 	if !useHTTP {
 		// Send the initial key for the original protocol
@@ -106,10 +125,10 @@ func connectAndForward() error {
 		if _, err = io.ReadFull(serverConn, response); err != nil {
 			return fmt.Errorf("failed to receive response from server: %v", err)
 		}
-		log.Printf("Received response from server: %x\n", response)
+		log.Printf("Received response from server: %x", response)
 
 		tunnelPort := binary.BigEndian.Uint32(response[16:20])
-		log.Printf("Server tunnel port: %d\n", tunnelPort)
+		log.Printf("Server tunnel port: %d", tunnelPort)
 
 		// Connect to the local service
 		localConn, err := net.Dial("tcp", fmt.Sprintf("%s:%s", localIP, localPort))
@@ -118,7 +137,7 @@ func connectAndForward() error {
 		}
 		defer localConn.Close()
 
-		log.Printf("Connected to local service at %s:%s\n", localIP, localPort)
+		log.Printf("Connected to local service at %s:%s", localIP, localPort)
 
 		// Forward traffic in both directions
 		go io.Copy(serverConn, localConn)
@@ -130,11 +149,11 @@ func connectAndForward() error {
 		}
 		defer localListener.Close()
 
-		log.Printf("Listening on %s:%s\n", localIP, localPort)
+		log.Printf("Listening on %s:%s", localIP, localPort)
 
 		for {
 			localConn, err := localListener.Accept()
-			if err != nil {
+						if err != nil {
 				log.Printf("Error accepting connection: %v\n", err)
 				continue
 			}

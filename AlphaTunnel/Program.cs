@@ -89,16 +89,30 @@ class ImprovedTcpTunnelServer
         {
             try
             {
-                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
+                if (UseHttp)
                 {
-                    await sslStream.AuthenticateAsServerAsync(ServerCertificate, clientCertificateRequired: true, SslProtocols.Tls12, checkCertificateRevocation: true);
+                    await HandleHttpRequest(client.GetStream());
+                }
+                else
+                {
+                    using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, null, EncryptionPolicy.AllowNoEncryption))
+                    {
+                        var sslServerAuthOptions = new SslServerAuthenticationOptions
+                        {
+                            ServerCertificate = ServerCertificate,
+                            ClientCertificateRequired = true,
+                            EnabledSslProtocols = SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13,
+                            CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                            RemoteCertificateValidationCallback = ValidateClientCertificate
+                        };
 
-                    if (UseHttp)
-                    {
-                        await HandleHttpRequest(sslStream);
-                    }
-                    else
-                    {
+                        await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
+
+                        Console.WriteLine($"Cipher: {sslStream.CipherAlgorithm} strength {sslStream.CipherStrength}");
+                        Console.WriteLine($"Hash: {sslStream.HashAlgorithm} strength {sslStream.HashStrength}");
+                        Console.WriteLine($"Key exchange: {sslStream.KeyExchangeAlgorithm} strength {sslStream.KeyExchangeStrength}");
+                        Console.WriteLine($"Protocol: {sslStream.SslProtocol}");
+
                         await HandleOriginalProtocol(sslStream, client);
                     }
                 }
@@ -107,6 +121,10 @@ class ImprovedTcpTunnelServer
             {
                 Console.WriteLine($"SSL/TLS authentication failed: {ex.Message}");
                 Console.WriteLine($"Inner Exception: {ex.InnerException?.Message}");
+                if (ex.InnerException is System.ComponentModel.Win32Exception win32Ex)
+                {
+                    Console.WriteLine($"Win32 error code: {win32Ex.NativeErrorCode}");
+                }
             }
             catch (Exception ex)
             {
@@ -116,14 +134,14 @@ class ImprovedTcpTunnelServer
         }
     }
 
-    static async Task HandleHttpRequest(SslStream sslStream)
+    static async Task HandleHttpRequest(Stream clientStream)
     {
         byte[] buffer = new byte[4096];
         int bytesRead;
 
-        while ((bytesRead = await sslStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+        while ((bytesRead = await clientStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
         {
-            await sslStream.WriteAsync(buffer, 0, bytesRead);
+            await clientStream.WriteAsync(buffer, 0, bytesRead);
             Console.WriteLine($"Forwarded {bytesRead} bytes");
         }
     }
@@ -211,6 +229,9 @@ class ImprovedTcpTunnelServer
         string thumbprint = cert2.Thumbprint;
 
         Console.WriteLine($"Received client certificate with thumbprint: {thumbprint}");
+        Console.WriteLine($"Certificate subject: {cert2.Subject}");
+        Console.WriteLine($"Certificate issuer: {cert2.Issuer}");
+        Console.WriteLine($"Certificate valid from: {cert2.NotBefore} to {cert2.NotAfter}");
 
         if (AllowedThumbprints.Contains(thumbprint))
         {
@@ -219,8 +240,10 @@ class ImprovedTcpTunnelServer
         }
 
         Console.WriteLine($"Client certificate is not in the list of allowed certificates. Thumbprint: {thumbprint}");
+        Console.WriteLine($"SSL Policy Errors: {sslPolicyErrors}");
         return false;
     }
+
     private static X509Certificate SelectServerCertificate(object sender, string hostName, X509CertificateCollection localCertificates, X509Certificate remoteCertificate, string[] acceptableIssuers)
     {
         // Here you can implement logic to select the appropriate server certificate
