@@ -1,3 +1,17 @@
    ./ssl_tunnel -server-ip 167.71.227.50 -server-port 3742 -local-ip 192.168.1.1 -local-port 80 -cert /root/client.crt -key /root/client.key -log /root/ssl_tunnel.log -buffer 8192 -http
 
    ./ssl_tunnel -server-ip 167.71.227.50 -server-port 3742 -local-ip 192.168.1.1 -local-port 80 -log /root/ssl_tunnel.log -buffer 8192 -http
+
+
+   These updated scripts now include:
+1. The original ValidateClientCertificate method in the C# server.
+Support for both the original protocol and HTTP mode in both client and server.
+3. Proper handling of the tunnel port in the original protocol mode.
+To use these scripts:
+For the original protocol:
+Server: dotnet run 3742 --allow-thumbprint <your_thumbprint>
+Client: ./ssl_tunnel -server-ip 167.71.227.50 -server-port 3742 -local-ip 127.0.0.1 -local-port 80 -cert /path/to/client.crt -key /path/to/client.key -log /path/to/logfile.log
+For HTTP mode:
+Server: dotnet run 3742 --http
+Client: ./ssl_tunnel -server-ip 167.71.227.50 -server-port 3742 -local-ip 127.0.0.1 -local-port 80 -log /path/to/logfile.log -http
+These scripts should now work for both modes while maintaining the original certificate validation logic.
