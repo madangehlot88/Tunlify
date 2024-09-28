@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -22,9 +21,7 @@ var (
 	clientCertPath string
 	clientKeyPath  string
 	logFilePath    string
-	bufferSize     int
 	useHTTP        bool
-	localHTTPS     bool
 )
 
 func init() {
@@ -35,9 +32,7 @@ func init() {
 	flag.StringVar(&clientCertPath, "cert", "", "Path to client certificate")
 	flag.StringVar(&clientKeyPath, "key", "", "Path to client key")
 	flag.StringVar(&logFilePath, "log", "ssl_tunnel.log", "Path to log file")
-	flag.IntVar(&bufferSize, "buffer", 4096, "Buffer size for data transfer")
 	flag.BoolVar(&useHTTP, "http", false, "Use HTTP mode for server connection")
-	flag.BoolVar(&localHTTPS, "local-https", false, "Use HTTPS for local service connection")
 }
 
 func main() {
@@ -100,7 +95,6 @@ func connectAndForward() error {
 	}
 
 	serverConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%s", serverIP, serverPort), config)
-
 	if err != nil {
 		return fmt.Errorf("failed to connect to server: %v", err)
 	}
@@ -109,35 +103,7 @@ func connectAndForward() error {
 	log.Println("Connected to server successfully.")
 	log.Printf("Using TLS version: %s", versionToString(serverConn.(*tls.Conn).ConnectionState().Version))
 
-	if !useHTTP {
-		// Send the initial key for the original protocol
-		key := []byte{0x00, 0x08, 0x00, 0x00, 0x00, 0x22, 0x4D, 0x00, 0x00, 0x00}
-		if _, err = serverConn.Write(key); err != nil {
-			return fmt.Errorf("failed to send initial key: %v", err)
-		}
-		log.Println("Sent initial key.")
-
-		// Receive and parse the response
-		response := make([]byte, 20)
-		if _, err = io.ReadFull(serverConn, response); err != nil {
-			return fmt.Errorf("failed to receive response from server: %v", err)
-		}
-		log.Printf("Received response from server: %x", response)
-
-		tunnelPort := binary.BigEndian.Uint32(response[16:20])
-		log.Printf("Server tunnel port: %d", tunnelPort)
-	}
-
-	var localConn net.Conn
-	if localHTTPS {
-		localConfig := &tls.Config{
-			InsecureSkipVerify: true, // Note: In production, you should properly verify the certificate
-		}
-		localConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%s", localIP, localPort), localConfig)
-	} else {
-		localConn, err = net.Dial("tcp", fmt.Sprintf("%s:%s", localIP, localPort))
-	}
-
+	localConn, err := net.Dial("tcp", fmt.Sprintf("%s:%s", localIP, localPort))
 	if err != nil {
 		return fmt.Errorf("failed to connect to local service: %v", err)
 	}

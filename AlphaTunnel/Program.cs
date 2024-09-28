@@ -174,24 +174,16 @@ class TcpTunnelServer
     {
         try
         {
-            using (var localClient = new TcpClient())
-            {
-                Console.WriteLine($"Attempting to connect to local service on port {LocalPort}...");
-                await localClient.ConnectAsync(IPAddress.Loopback, LocalPort);
-                using (var localStream = localClient.GetStream())
-                {
-                    Console.WriteLine($"Connected to local service on port {LocalPort}. Forwarding traffic...");
+            Console.WriteLine("Handling HTTP mode connection...");
 
-                    Task clientToLocal = ForwardDataAsync(sslStream, localStream, "Client -> Local", true);
-                    Task localToClient = ForwardDataAsync(localStream, sslStream, "Local -> Client", false);
+            Task clientToServer = ForwardDataAsync(sslStream, sslStream, "Client -> Server", false);
+            Task serverToClient = ForwardDataAsync(sslStream, sslStream, "Server -> Client", false);
 
-                    await Task.WhenAny(clientToLocal, localToClient);
-                }
-            }
+            await Task.WhenAny(clientToServer, serverToClient);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error connecting to local service: {ex.Message}");
+            Console.WriteLine($"Error in HTTP mode: {ex.Message}");
             Console.WriteLine($"Stack trace: {ex.StackTrace}");
         }
     }
@@ -204,13 +196,6 @@ class TcpTunnelServer
             int bytesRead;
             while ((bytesRead = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
             {
-                if (modifyHeaders && direction == "Client -> Local")
-                {
-                    string data = Encoding.ASCII.GetString(buffer, 0, bytesRead);
-                    data = data.Replace($"Host: {ServerCertificate.GetNameInfo(X509NameType.DnsName, false)}:{ServerPort}", $"Host: localhost:{LocalPort}");
-                    buffer = Encoding.ASCII.GetBytes(data);
-                    bytesRead = buffer.Length;
-                }
                 await destination.WriteAsync(buffer, 0, bytesRead);
                 Console.WriteLine($"{direction}: Forwarded {bytesRead} bytes");
             }
