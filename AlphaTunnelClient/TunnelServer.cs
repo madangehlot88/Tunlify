@@ -4,10 +4,9 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
-using System.Threading;
 using System.Threading.Tasks;
 using System.IO;
-using System.Text;
+using System.Collections.Generic;
 
 class ImprovedTcpTunnelServer
 {
@@ -57,10 +56,11 @@ class ImprovedTcpTunnelServer
 
         try
         {
-            var listener = new TcpListener(IPAddress.Any, TunnelPort);
+            var listener = new TcpListener(IPAddress.Any, UseHttp ? ServerPort : TunnelPort);
             listener.Start();
-            Console.WriteLine($"Tunnel listening on port {TunnelPort}");
-            Console.WriteLine($"Forwarding to local service on port {ServerPort}");
+            Console.WriteLine($"Server listening on port {(UseHttp ? ServerPort : TunnelPort)}");
+            if (!UseHttp)
+                Console.WriteLine($"Forwarding to local service on port {ServerPort}");
 
             while (true)
             {
@@ -82,22 +82,37 @@ class ImprovedTcpTunnelServer
         l.Stop();
         return port;
     }
+
     static async Task HandleClientAsync(TcpClient client)
     {
         using (client)
         {
             try
             {
-                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, SelectServerCertificate))
+                if (UseHttp)
                 {
-                    await sslStream.AuthenticateAsServerAsync(ServerCertificate, clientCertificateRequired: true, SslProtocols.Tls12, checkCertificateRevocation: true);
+                    await HandleHttpRequest(client.GetStream());
+                }
+                else
+                {
+                    using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, null, EncryptionPolicy.AllowNoEncryption))
+                    {
+                        var sslServerAuthOptions = new SslServerAuthenticationOptions
+                        {
+                            ServerCertificate = ServerCertificate,
+                            ClientCertificateRequired = true,
+                            EnabledSslProtocols = SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13,
+                            CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                            RemoteCertificateValidationCallback = ValidateClientCertificate
+                        };
 
-                    if (UseHttp)
-                    {
-                        await HandleHttpRequest(sslStream);
-                    }
-                    else
-                    {
+                        await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
+
+                        Console.WriteLine($"Cipher: {sslStream.CipherAlgorithm} strength {sslStream.CipherStrength}");
+                        Console.WriteLine($"Hash: {sslStream.HashAlgorithm} strength {sslStream.HashStrength}");
+                        Console.WriteLine($"Key exchange: {sslStream.KeyExchangeAlgorithm} strength {sslStream.KeyExchangeStrength}");
+                        Console.WriteLine($"Protocol: {sslStream.SslProtocol}");
+
                         await HandleOriginalProtocol(sslStream, client);
                     }
                 }
@@ -106,6 +121,10 @@ class ImprovedTcpTunnelServer
             {
                 Console.WriteLine($"SSL/TLS authentication failed: {ex.Message}");
                 Console.WriteLine($"Inner Exception: {ex.InnerException?.Message}");
+                if (ex.InnerException is System.ComponentModel.Win32Exception win32Ex)
+                {
+                    Console.WriteLine($"Win32 error code: {win32Ex.NativeErrorCode}");
+                }
             }
             catch (Exception ex)
             {
@@ -115,45 +134,15 @@ class ImprovedTcpTunnelServer
         }
     }
 
-    static async Task HandleHttpRequest(SslStream sslStream)
+    static async Task HandleHttpRequest(Stream clientStream)
     {
-        using (var reader = new StreamReader(sslStream))
-        using (var writer = new StreamWriter(sslStream))
+        byte[] buffer = new byte[4096];
+        int bytesRead;
+
+        while ((bytesRead = await clientStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
         {
-            string request = await reader.ReadLineAsync();
-            Console.WriteLine($"Received HTTP request: {request}");
-
-            // Parse the request (this is a very basic parser and should be more robust in production)
-            string[] parts = request.Split(' ');
-            if (parts.Length < 2)
-            {
-                await writer.WriteLineAsync("HTTP/1.1 400 Bad Request");
-                await writer.WriteLineAsync("Content-Type: text/plain");
-                await writer.WriteLineAsync();
-                await writer.WriteLineAsync("Invalid request");
-                await writer.FlushAsync();
-                return;
-            }
-
-            string method = parts[0];
-            string path = parts[1];
-
-            // Read headers
-            while (true)
-            {
-                string line = await reader.ReadLineAsync();
-                if (string.IsNullOrEmpty(line))
-                    break;
-                Console.WriteLine($"Header: {line}");
-            }
-
-            // Here you would typically process the request and generate a response
-            // For this example, we'll just send a simple response
-            await writer.WriteLineAsync("HTTP/1.1 200 OK");
-            await writer.WriteLineAsync("Content-Type: text/plain");
-            await writer.WriteLineAsync();
-            await writer.WriteLineAsync($"Received {method} request for {path}");
-            await writer.FlushAsync();
+            await clientStream.WriteAsync(buffer, 0, bytesRead);
+            Console.WriteLine($"Forwarded {bytesRead} bytes");
         }
     }
 
@@ -214,7 +203,6 @@ class ImprovedTcpTunnelServer
         }
         catch (IOException)
         {
-            // The client has disconnected
             Console.WriteLine($"{direction}: Connection closed");
         }
         catch (Exception ex)
@@ -241,6 +229,9 @@ class ImprovedTcpTunnelServer
         string thumbprint = cert2.Thumbprint;
 
         Console.WriteLine($"Received client certificate with thumbprint: {thumbprint}");
+        Console.WriteLine($"Certificate subject: {cert2.Subject}");
+        Console.WriteLine($"Certificate issuer: {cert2.Issuer}");
+        Console.WriteLine($"Certificate valid from: {cert2.NotBefore} to {cert2.NotAfter}");
 
         if (AllowedThumbprints.Contains(thumbprint))
         {
@@ -249,6 +240,7 @@ class ImprovedTcpTunnelServer
         }
 
         Console.WriteLine($"Client certificate is not in the list of allowed certificates. Thumbprint: {thumbprint}");
+        Console.WriteLine($"SSL Policy Errors: {sslPolicyErrors}");
         return false;
     }
 
