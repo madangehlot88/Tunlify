@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -11,6 +12,7 @@ class HttpTunnelServer
     private static int HttpPort = 3743;
     private static string ServerIP = "0.0.0.0"; // Listen on all available interfaces
     private static TcpListener httpListener;
+    private static ConcurrentQueue<TcpClient> tunnelClients = new ConcurrentQueue<TcpClient>();
 
     static async Task Main(string[] args)
     {
@@ -24,49 +26,34 @@ class HttpTunnelServer
         tunnelListener.Start();
         Console.WriteLine($"Tunnel listener started on {ServerIP}:{TunnelPort}");
 
+        httpListener = new TcpListener(IPAddress.Parse(ServerIP), HttpPort);
+        httpListener.Start();
+        Console.WriteLine($"HTTP listener started on {ServerIP}:{HttpPort}");
+
+        _ = AcceptHttpClientsAsync();
+
         while (true)
         {
             TcpClient tunnelClient = await tunnelListener.AcceptTcpClientAsync();
-            Console.WriteLine("Tunnel client connected.");
-
-            _ = HandleTunnelClientAsync(tunnelClient);
+            Console.WriteLine($"Tunnel client connected from {((IPEndPoint)tunnelClient.Client.RemoteEndPoint).Address}");
+            tunnelClients.Enqueue(tunnelClient);
         }
     }
 
-    static async Task HandleTunnelClientAsync(TcpClient tunnelClient)
+    static async Task AcceptHttpClientsAsync()
     {
-        try
+        while (true)
         {
-            using var tunnelStream = tunnelClient.GetStream();
-
-            if (httpListener == null)
-            {
-                httpListener = new TcpListener(IPAddress.Parse(ServerIP), HttpPort);
-                httpListener.Start();
-                Console.WriteLine($"HTTP listener started on {ServerIP}:{HttpPort}");
-            }
-
-            while (true)
-            {
-                TcpClient httpClient = await httpListener.AcceptTcpClientAsync();
-                _ = HandleHttpRequestAsync(httpClient, tunnelStream);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error handling tunnel client: {ex.Message}");
-        }
-        finally
-        {
-            tunnelClient.Close();
+            TcpClient httpClient = await httpListener.AcceptTcpClientAsync();
+            _ = HandleHttpRequestAsync(httpClient);
         }
     }
 
-    static async Task HandleHttpRequestAsync(TcpClient httpClient, NetworkStream tunnelStream)
+    static async Task HandleHttpRequestAsync(TcpClient httpClient)
     {
         try
         {
-            Console.WriteLine("Received HTTP request");
+            Console.WriteLine($"Received HTTP request from {((IPEndPoint)httpClient.Client.RemoteEndPoint).Address}");
             using var httpStream = httpClient.GetStream();
 
             // Read the HTTP request
@@ -75,40 +62,55 @@ class HttpTunnelServer
             string request = Encoding.ASCII.GetString(buffer, 0, bytesRead);
             Console.WriteLine($"Received request:\n{request}");
 
-            // Forward the request to the tunnel
-            await tunnelStream.WriteAsync(buffer, 0, bytesRead);
-            Console.WriteLine("Forwarded request to tunnel");
-
-            // Read the response from the tunnel
-            using var ms = new MemoryStream();
-            bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
-            Console.WriteLine($"Received {bytesRead} bytes from tunnel");
-            while (bytesRead > 0)
+            if (tunnelClients.TryDequeue(out TcpClient tunnelClient))
             {
-                ms.Write(buffer, 0, bytesRead);
-                if (tunnelStream.DataAvailable)
+                using var tunnelStream = tunnelClient.GetStream();
+
+                // Forward the request to the tunnel
+                await tunnelStream.WriteAsync(buffer, 0, bytesRead);
+                Console.WriteLine("Forwarded request to tunnel");
+
+                // Read the response from the tunnel
+                using var ms = new MemoryStream();
+                bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
+                Console.WriteLine($"Received {bytesRead} bytes from tunnel");
+                while (bytesRead > 0)
                 {
-                    bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
-                    Console.WriteLine($"Received additional {bytesRead} bytes from tunnel");
+                    ms.Write(buffer, 0, bytesRead);
+                    if (tunnelStream.DataAvailable)
+                    {
+                        bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
+                        Console.WriteLine($"Received additional {bytesRead} bytes from tunnel");
+                    }
+                    else
+                    {
+                        break;
+                    }
                 }
-                else
-                {
-                    break;
-                }
+
+                // Forward the response to the HTTP client
+                byte[] response = ms.ToArray();
+                Console.WriteLine($"Forwarding {response.Length} bytes to HTTP client");
+                await httpStream.WriteAsync(response, 0, response.Length);
+
+                Console.WriteLine("HTTP request handled successfully");
             }
-
-            // Forward the response to the HTTP client
-            byte[] response = ms.ToArray();
-            Console.WriteLine($"Forwarding {response.Length} bytes to HTTP client");
-            await httpStream.WriteAsync(response, 0, response.Length);
-
-            httpClient.Close();
-            Console.WriteLine("HTTP request handled successfully");
+            else
+            {
+                Console.WriteLine("No available tunnel clients to handle the request");
+                string errorResponse = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 24\r\n\r\nNo tunnel client available";
+                byte[] errorBytes = Encoding.ASCII.GetBytes(errorResponse);
+                await httpStream.WriteAsync(errorBytes, 0, errorBytes.Length);
+            }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error handling HTTP request: {ex.Message}");
             Console.WriteLine($"Stack trace: {ex.StackTrace}");
+        }
+        finally
+        {
+            httpClient.Close();
         }
     }
 }
