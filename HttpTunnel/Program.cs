@@ -13,7 +13,6 @@ class HttpTunnelServer
     private static string ServerIP = "0.0.0.0"; // Listen on all available interfaces
     private static TcpListener httpListener;
     private static ConcurrentQueue<TcpClient> tunnelClients = new ConcurrentQueue<TcpClient>();
-    private static ConcurrentDictionary<string, CachedResponse> responseCache = new ConcurrentDictionary<string, CachedResponse>();
 
     static async Task Main(string[] args)
     {
@@ -69,23 +68,6 @@ class HttpTunnelServer
             string request = Encoding.ASCII.GetString(buffer, 0, bytesRead);
             Console.WriteLine($"Received request:\n{request}");
 
-            string requestPath = GetRequestPath(request);
-
-            // Check cache first
-            if (responseCache.TryGetValue(requestPath, out CachedResponse cachedResponse))
-            {
-                if (cachedResponse.IsValid())
-                {
-                    Console.WriteLine($"Serving cached response for {requestPath}");
-                    await WriteToStreamSafelyAsync(httpStream, cachedResponse.Data);
-                    return;
-                }
-                else
-                {
-                    responseCache.TryRemove(requestPath, out _);
-                }
-            }
-
             TcpClient tunnelClient = null;
             for (int i = 0; i < 3; i++) // Try up to 3 times
             {
@@ -114,12 +96,6 @@ class HttpTunnelServer
                     Console.WriteLine($"Forwarding {response.Length} bytes to HTTP client");
                     await WriteToStreamSafelyAsync(httpStream, response);
                     Console.WriteLine("HTTP request handled successfully");
-
-                    // Cache the successful response
-                    if (response.Length > 0 && !IsErrorResponse(response))
-                    {
-                        responseCache[requestPath] = new CachedResponse(response);
-                    }
                 }
                 catch (TimeoutException)
                 {
@@ -184,43 +160,5 @@ class HttpTunnelServer
             // For now, we'll just log it and let the caller handle the failure
             throw;
         }
-    }
-
-    static string GetRequestPath(string request)
-    {
-        string[] lines = request.Split('\n');
-        if (lines.Length > 0)
-        {
-            string[] parts = lines[0].Split(' ');
-            if (parts.Length > 1)
-            {
-                return parts[1];
-            }
-        }
-        return string.Empty;
-    }
-
-    static bool IsErrorResponse(byte[] response)
-    {
-        string responseString = Encoding.ASCII.GetString(response);
-        return responseString.Contains("HTTP/1.1 4") || responseString.Contains("HTTP/1.1 5");
-    }
-}
-
-class CachedResponse
-{
-    public byte[] Data { get; }
-    public DateTime Timestamp { get; }
-    private const int CacheValiditySeconds = 30;
-
-    public CachedResponse(byte[] data)
-    {
-        Data = data;
-        Timestamp = DateTime.Now;
-    }
-
-    public bool IsValid()
-    {
-        return (DateTime.Now - Timestamp).TotalSeconds < CacheValiditySeconds;
     }
 }
