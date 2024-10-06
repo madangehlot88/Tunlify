@@ -15,6 +15,7 @@ class HttpTunnelServer
     private static TcpClient tunnelClient;
     private static SemaphoreSlim tunnelSemaphore = new SemaphoreSlim(1, 1);
     private static DateTime lastHeartbeat = DateTime.MinValue;
+    private static bool isReconnecting = false;
 
     static async Task Main(string[] args)
     {
@@ -50,6 +51,7 @@ class HttpTunnelServer
                 tunnelClient?.Close();
                 tunnelClient = client;
                 lastHeartbeat = DateTime.Now;
+                isReconnecting = false;
                 Console.WriteLine($"Tunnel client connected from {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
             }
             finally
@@ -84,7 +86,7 @@ class HttpTunnelServer
             await tunnelSemaphore.WaitAsync();
             try
             {
-                if (tunnelClient != null && tunnelClient.Connected && (DateTime.Now - lastHeartbeat).TotalSeconds < 60)
+                if (tunnelClient != null && tunnelClient.Connected && (DateTime.Now - lastHeartbeat).TotalSeconds < 60 && !isReconnecting)
                 {
                     using var tunnelStream = tunnelClient.GetStream();
                     // Forward the request to the tunnel
@@ -108,11 +110,12 @@ class HttpTunnelServer
                         string errorResponse = "HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 21\r\n\r\nTunnel read timed out";
                         byte[] errorBytes = Encoding.ASCII.GetBytes(errorResponse);
                         await WriteToStreamSafelyAsync(httpStream, errorBytes);
+                        isReconnecting = true;
                     }
                 }
                 else
                 {
-                    Console.WriteLine($"No available tunnel client to handle the request. TunnelClient null: {tunnelClient == null}, Connected: {tunnelClient?.Connected ?? false}, Last heartbeat: {lastHeartbeat}");
+                    Console.WriteLine($"No available tunnel client to handle the request. TunnelClient null: {tunnelClient == null}, Connected: {tunnelClient?.Connected ?? false}, Last heartbeat: {lastHeartbeat}, Reconnecting: {isReconnecting}");
                     string errorResponse = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 24\r\n\r\nNo tunnel client available";
                     byte[] errorBytes = Encoding.ASCII.GetBytes(errorResponse);
                     await WriteToStreamSafelyAsync(httpStream, errorBytes);
@@ -174,11 +177,11 @@ class HttpTunnelServer
     {
         while (true)
         {
-            await Task.Delay(TimeSpan.FromSeconds(30));
+            await Task.Delay(TimeSpan.FromSeconds(10)); // Reduced heartbeat interval
             await tunnelSemaphore.WaitAsync();
             try
             {
-                if (tunnelClient != null && tunnelClient.Connected)
+                if (tunnelClient != null && tunnelClient.Connected && !isReconnecting)
                 {
                     try
                     {
@@ -193,11 +196,19 @@ class HttpTunnelServer
                         Console.WriteLine($"Error sending heartbeat: {ex.Message}");
                         tunnelClient.Close();
                         tunnelClient = null;
+                        isReconnecting = true;
                     }
                 }
                 else
                 {
-                    Console.WriteLine("No tunnel client available for heartbeat");
+                    Console.WriteLine($"No tunnel client available for heartbeat. Reconnecting: {isReconnecting}");
+                    if (isReconnecting)
+                    {
+                        // Attempt to reconnect
+                        tunnelClient?.Close();
+                        tunnelClient = null;
+                        isReconnecting = false;
+                    }
                 }
             }
             finally
