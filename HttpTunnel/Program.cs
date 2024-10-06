@@ -14,6 +14,7 @@ class HttpTunnelServer
     private static TcpListener httpListener;
     private static TcpClient tunnelClient;
     private static SemaphoreSlim tunnelSemaphore = new SemaphoreSlim(1, 1);
+    private static DateTime lastHeartbeat = DateTime.MinValue;
 
     static async Task Main(string[] args)
     {
@@ -48,6 +49,7 @@ class HttpTunnelServer
             {
                 tunnelClient?.Close();
                 tunnelClient = client;
+                lastHeartbeat = DateTime.Now;
                 Console.WriteLine($"Tunnel client connected from {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
             }
             finally
@@ -82,7 +84,7 @@ class HttpTunnelServer
             await tunnelSemaphore.WaitAsync();
             try
             {
-                if (tunnelClient != null && tunnelClient.Connected)
+                if (tunnelClient != null && tunnelClient.Connected && (DateTime.Now - lastHeartbeat).TotalSeconds < 60)
                 {
                     using var tunnelStream = tunnelClient.GetStream();
                     // Forward the request to the tunnel
@@ -110,7 +112,7 @@ class HttpTunnelServer
                 }
                 else
                 {
-                    Console.WriteLine("No available tunnel client to handle the request");
+                    Console.WriteLine($"No available tunnel client to handle the request. TunnelClient null: {tunnelClient == null}, Connected: {tunnelClient?.Connected ?? false}, Last heartbeat: {lastHeartbeat}");
                     string errorResponse = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 24\r\n\r\nNo tunnel client available";
                     byte[] errorBytes = Encoding.ASCII.GetBytes(errorResponse);
                     await WriteToStreamSafelyAsync(httpStream, errorBytes);
@@ -183,6 +185,7 @@ class HttpTunnelServer
                         using var stream = tunnelClient.GetStream();
                         byte[] heartbeat = Encoding.ASCII.GetBytes("HEARTBEAT");
                         await WriteToStreamSafelyAsync(stream, heartbeat);
+                        lastHeartbeat = DateTime.Now;
                         Console.WriteLine("Heartbeat sent to tunnel client");
                     }
                     catch (Exception ex)
@@ -191,6 +194,10 @@ class HttpTunnelServer
                         tunnelClient.Close();
                         tunnelClient = null;
                     }
+                }
+                else
+                {
+                    Console.WriteLine("No tunnel client available for heartbeat");
                 }
             }
             finally
