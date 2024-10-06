@@ -77,6 +77,7 @@ class HttpTunnelServer
                     break;
                 }
                 await Task.Delay(1000); // Wait for 1 second before retrying
+                Console.WriteLine($"Retry {i + 1} to get tunnel stream");
             }
 
             if (tunnelStream != null)
@@ -85,30 +86,25 @@ class HttpTunnelServer
                 await tunnelStream.WriteAsync(buffer, 0, bytesRead);
                 Console.WriteLine("Forwarded request to tunnel");
 
-                // Read the response from the tunnel
+                // Read the response from the tunnel with a timeout
                 using var ms = new MemoryStream();
-                bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
-                Console.WriteLine($"Received {bytesRead} bytes from tunnel");
-                while (bytesRead > 0)
+                var readTask = ReadFromStreamWithTimeoutAsync(tunnelStream, ms, TimeSpan.FromSeconds(10));
+                try
                 {
-                    ms.Write(buffer, 0, bytesRead);
-                    if (tunnelStream.DataAvailable)
-                    {
-                        bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
-                        Console.WriteLine($"Received additional {bytesRead} bytes from tunnel");
-                    }
-                    else
-                    {
-                        break;
-                    }
+                    await readTask;
+                    byte[] response = ms.ToArray();
+                    Console.WriteLine($"Forwarding {response.Length} bytes to HTTP client");
+                    await httpStream.WriteAsync(response, 0, response.Length);
+                    Console.WriteLine("HTTP request handled successfully");
+                }
+                catch (TimeoutException)
+                {
+                    Console.WriteLine("Timeout reading from tunnel");
+                    string errorResponse = "HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 21\r\n\r\nTunnel read timed out";
+                    byte[] errorBytes = Encoding.ASCII.GetBytes(errorResponse);
+                    await httpStream.WriteAsync(errorBytes, 0, errorBytes.Length);
                 }
 
-                // Forward the response to the HTTP client
-                byte[] response = ms.ToArray();
-                Console.WriteLine($"Forwarding {response.Length} bytes to HTTP client");
-                await httpStream.WriteAsync(response, 0, response.Length);
-
-                Console.WriteLine("HTTP request handled successfully");
                 tunnelStreams.Enqueue(tunnelStream); // Put the tunnel stream back in the queue
             }
             else
@@ -127,6 +123,27 @@ class HttpTunnelServer
         finally
         {
             httpClient.Close();
+        }
+    }
+
+    static async Task ReadFromStreamWithTimeoutAsync(NetworkStream stream, MemoryStream ms, TimeSpan timeout)
+    {
+        byte[] buffer = new byte[4096];
+        using var cts = new System.Threading.CancellationTokenSource(timeout);
+        try
+        {
+            while (true)
+            {
+                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, cts.Token);
+                if (bytesRead == 0) break;
+                ms.Write(buffer, 0, bytesRead);
+                Console.WriteLine($"Received {bytesRead} bytes from tunnel");
+                if (!stream.DataAvailable) break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw new TimeoutException();
         }
     }
 }
