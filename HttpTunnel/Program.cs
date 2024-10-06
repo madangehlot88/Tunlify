@@ -12,7 +12,7 @@ class HttpTunnelServer
     private static int HttpPort = 3743;
     private static string ServerIP = "0.0.0.0"; // Listen on all available interfaces
     private static TcpListener httpListener;
-    private static ConcurrentQueue<TcpClient> tunnelClients = new ConcurrentQueue<TcpClient>();
+    private static ConcurrentQueue<NetworkStream> tunnelStreams = new ConcurrentQueue<NetworkStream>();
 
     static async Task Main(string[] args)
     {
@@ -31,12 +31,19 @@ class HttpTunnelServer
         Console.WriteLine($"HTTP listener started on {ServerIP}:{HttpPort}");
 
         _ = AcceptHttpClientsAsync();
+        _ = AcceptTunnelClientsAsync(tunnelListener);
 
+        await Task.Delay(-1); // Keep the application running
+    }
+
+    static async Task AcceptTunnelClientsAsync(TcpListener listener)
+    {
         while (true)
         {
-            TcpClient tunnelClient = await tunnelListener.AcceptTcpClientAsync();
+            TcpClient tunnelClient = await listener.AcceptTcpClientAsync();
             Console.WriteLine($"Tunnel client connected from {((IPEndPoint)tunnelClient.Client.RemoteEndPoint).Address}");
-            tunnelClients.Enqueue(tunnelClient);
+            NetworkStream tunnelStream = tunnelClient.GetStream();
+            tunnelStreams.Enqueue(tunnelStream);
         }
     }
 
@@ -62,10 +69,18 @@ class HttpTunnelServer
             string request = Encoding.ASCII.GetString(buffer, 0, bytesRead);
             Console.WriteLine($"Received request:\n{request}");
 
-            if (tunnelClients.TryDequeue(out TcpClient tunnelClient))
+            NetworkStream tunnelStream = null;
+            for (int i = 0; i < 3; i++) // Try up to 3 times
             {
-                using var tunnelStream = tunnelClient.GetStream();
+                if (tunnelStreams.TryDequeue(out tunnelStream))
+                {
+                    break;
+                }
+                await Task.Delay(1000); // Wait for 1 second before retrying
+            }
 
+            if (tunnelStream != null)
+            {
                 // Forward the request to the tunnel
                 await tunnelStream.WriteAsync(buffer, 0, bytesRead);
                 Console.WriteLine("Forwarded request to tunnel");
@@ -94,6 +109,7 @@ class HttpTunnelServer
                 await httpStream.WriteAsync(response, 0, response.Length);
 
                 Console.WriteLine("HTTP request handled successfully");
+                tunnelStreams.Enqueue(tunnelStream); // Put the tunnel stream back in the queue
             }
             else
             {
