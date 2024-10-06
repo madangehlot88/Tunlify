@@ -10,6 +10,7 @@ class HttpTunnelServer
     private static int TunnelPort = 3742;
     private static int HttpPort = 3743;
     private static string ServerIP = "0.0.0.0"; // Listen on all available interfaces
+    private static TcpListener httpListener;
 
     static async Task Main(string[] args)
     {
@@ -38,9 +39,12 @@ class HttpTunnelServer
         {
             using var tunnelStream = tunnelClient.GetStream();
 
-            var httpListener = new TcpListener(IPAddress.Parse(ServerIP), HttpPort);
-            httpListener.Start();
-            Console.WriteLine($"HTTP listener started on {ServerIP}:{HttpPort}");
+            if (httpListener == null)
+            {
+                httpListener = new TcpListener(IPAddress.Parse(ServerIP), HttpPort);
+                httpListener.Start();
+                Console.WriteLine($"HTTP listener started on {ServerIP}:{HttpPort}");
+            }
 
             while (true)
             {
@@ -57,6 +61,7 @@ class HttpTunnelServer
             tunnelClient.Close();
         }
     }
+
     static async Task HandleHttpRequestAsync(TcpClient httpClient, NetworkStream tunnelStream)
     {
         try
@@ -103,6 +108,7 @@ class HttpTunnelServer
         catch (Exception ex)
         {
             Console.WriteLine($"Error handling HTTP request: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
         }
     }
 }
