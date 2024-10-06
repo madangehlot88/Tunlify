@@ -57,30 +57,34 @@ class HttpTunnelServer
             tunnelClient.Close();
         }
     }
-
     static async Task HandleHttpRequestAsync(TcpClient httpClient, NetworkStream tunnelStream)
     {
         try
         {
+            Console.WriteLine("Received HTTP request");
             using var httpStream = httpClient.GetStream();
 
             // Read the HTTP request
             byte[] buffer = new byte[4096];
             int bytesRead = await httpStream.ReadAsync(buffer, 0, buffer.Length);
             string request = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+            Console.WriteLine($"Received request:\n{request}");
 
             // Forward the request to the tunnel
             await tunnelStream.WriteAsync(buffer, 0, bytesRead);
+            Console.WriteLine("Forwarded request to tunnel");
 
             // Read the response from the tunnel
             using var ms = new MemoryStream();
             bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
+            Console.WriteLine($"Received {bytesRead} bytes from tunnel");
             while (bytesRead > 0)
             {
                 ms.Write(buffer, 0, bytesRead);
                 if (tunnelStream.DataAvailable)
                 {
                     bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
+                    Console.WriteLine($"Received additional {bytesRead} bytes from tunnel");
                 }
                 else
                 {
@@ -90,9 +94,11 @@ class HttpTunnelServer
 
             // Forward the response to the HTTP client
             byte[] response = ms.ToArray();
+            Console.WriteLine($"Forwarding {response.Length} bytes to HTTP client");
             await httpStream.WriteAsync(response, 0, response.Length);
 
             httpClient.Close();
+            Console.WriteLine("HTTP request handled successfully");
         }
         catch (Exception ex)
         {
