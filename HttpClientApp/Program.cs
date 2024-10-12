@@ -67,36 +67,14 @@ class TcpTunnelClient
             await client.ConnectAsync(ServerAddress, ServerPort);
             Console.WriteLine($"Connected to server: {ServerAddress}:{ServerPort}");
 
-            using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateServerCertificate, null))
+            using (NetworkStream stream = client.GetStream())
             {
-                try
-                {
-                    Console.WriteLine("Starting SSL/TLS handshake...");
-                    var sslClientAuthOptions = new SslClientAuthenticationOptions
-                    {
-                        TargetHost = ServerAddress,
-                        ClientCertificates = new X509CertificateCollection { ClientCertificate },
-                        EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13,
-                        CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-                    };
-
-                    await sslStream.AuthenticateAsClientAsync(sslClientAuthOptions);
-
-                    Console.WriteLine("SSL/TLS handshake completed");
-                    Console.WriteLine($"SSL/TLS version: {sslStream.SslProtocol}");
-
-                    await HandleHttpMode(sslStream);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"SSL/TLS error: {ex.Message}");
-                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
-                }
+                await HandleHttpMode(stream);
             }
         }
     }
 
-    static async Task HandleHttpMode(SslStream sslStream)
+    static async Task HandleHttpMode(Stream sslStream)
     {
         try
         {

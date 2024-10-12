@@ -64,27 +64,26 @@ class TcpTunnelServer
 
                 using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
                 {
-                    var sslServerAuthOptions = new SslServerAuthenticationOptions
-                    {
-                        ServerCertificate = ServerCertificate,
-                        ClientCertificateRequired = false,
-                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                        CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
-                        RemoteCertificateValidationCallback = ValidateClientCertificate
-                    };
-
                     try
                     {
+                        var sslServerAuthOptions = new SslServerAuthenticationOptions
+                        {
+                            ServerCertificate = ServerCertificate,
+                            ClientCertificateRequired = false,
+                            EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                            CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                            RemoteCertificateValidationCallback = ValidateClientCertificate
+                        };
+
                         await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
+                        Console.WriteLine($"SSL/TLS connection established. Protocol: {sslStream.SslProtocol}");
                     }
-                    catch (IOException ioEx)
+                    catch (IOException)
                     {
-                        Console.WriteLine($"SSL/TLS handshake failed: {ioEx.Message}");
+                        Console.WriteLine("Non-SSL connection detected. Proceeding with plain connection.");
+                        await HandleHttpMode(client.GetStream());
                         return;
                     }
-
-                    Console.WriteLine($"Client connected: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
-                    Console.WriteLine($"SSL/TLS version: {sslStream.SslProtocol}");
 
                     await HandleHttpMode(sslStream);
                 }
@@ -97,7 +96,7 @@ class TcpTunnelServer
         }
     }
 
-    static async Task HandleHttpMode(SslStream sslStream)
+    static async Task HandleHttpMode(Stream stream)
     {
         TcpListener httpListener = new TcpListener(IPAddress.Any, ServerPort);
         httpListener.Start();
@@ -109,7 +108,7 @@ class TcpTunnelServer
             while (true)
             {
                 TcpClient httpClient = await httpListener.AcceptTcpClientAsync();
-                _ = ProcessHttpRequestAsync(httpClient, sslStream);
+                _ = ProcessHttpRequestAsync(httpClient, stream);
             }
         }
         finally
@@ -118,7 +117,7 @@ class TcpTunnelServer
         }
     }
 
-    static async Task ProcessHttpRequestAsync(TcpClient httpClient, SslStream tunnelStream)
+    static async Task ProcessHttpRequestAsync(TcpClient httpClient, Stream tunnelStream)
     {
         using (httpClient)
         using (NetworkStream httpStream = httpClient.GetStream())
@@ -149,7 +148,6 @@ class TcpTunnelServer
             Console.WriteLine($"{direction}: Connection closed");
         }
     }
-
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
         if (AllowAllCertificates)
