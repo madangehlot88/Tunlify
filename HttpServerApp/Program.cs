@@ -75,6 +75,7 @@ class TunnelServer
         catch (Exception ex)
         {
             Console.WriteLine($"Error handling request: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
         }
     }
 
@@ -84,19 +85,53 @@ class TunnelServer
         {
             StringBuilder message = new StringBuilder();
             string line;
+            int contentLength = 0;
+            bool isChunked = false;
+
+            // Read headers
             while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync()))
             {
                 message.AppendLine(line);
+                if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(line.Split(':')[1].Trim(), out int length))
+                    {
+                        contentLength = length;
+                    }
+                }
+                else if (line.StartsWith("Transfer-Encoding: chunked", StringComparison.OrdinalIgnoreCase))
+                {
+                    isChunked = true;
+                }
             }
+            message.AppendLine(); // Add empty line after headers
 
-            // Read the message body if Content-Length is present
-            string headers = message.ToString();
-            string contentLengthHeader = headers.Split(new[] { "Content-Length: " }, StringSplitOptions.None)[1];
-            int contentLength = int.Parse(contentLengthHeader.Split('\r')[0]);
-
-            char[] buffer = new char[contentLength];
-            await reader.ReadBlockAsync(buffer, 0, contentLength);
-            message.Append(buffer);
+            // Read body
+            if (contentLength > 0)
+            {
+                char[] buffer = new char[contentLength];
+                await reader.ReadBlockAsync(buffer, 0, contentLength);
+                message.Append(buffer);
+            }
+            else if (isChunked)
+            {
+                while (true)
+                {
+                    string chunkSizeLine = await reader.ReadLineAsync();
+                    if (!int.TryParse(chunkSizeLine, System.Globalization.NumberStyles.HexNumber, null, out int chunkSize))
+                    {
+                        break;
+                    }
+                    if (chunkSize == 0)
+                    {
+                        break;
+                    }
+                    char[] buffer = new char[chunkSize];
+                    await reader.ReadBlockAsync(buffer, 0, chunkSize);
+                    message.Append(buffer);
+                    await reader.ReadLineAsync(); // Read the CRLF after the chunk
+                }
+            }
 
             return message.ToString();
         }
