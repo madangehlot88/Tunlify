@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
+using System.IO;
 
 class TunnelClient
 {
@@ -45,32 +46,40 @@ class TunnelClient
                                 HttpResponseMessage response = await httpClient.SendAsync(httpRequest);
 
                                 // Construct the full HTTP response
-                                StringBuilder fullResponse = new StringBuilder();
-                                fullResponse.AppendLine($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}");
+                                StringBuilder headerBuilder = new StringBuilder();
+                                headerBuilder.AppendLine($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}");
                                 foreach (var header in response.Headers)
                                 {
-                                    fullResponse.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+                                    headerBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
                                 }
                                 foreach (var header in response.Content.Headers)
                                 {
-                                    fullResponse.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+                                    if (header.Key.ToLower() != "content-length")
+                                    {
+                                        headerBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+                                    }
                                 }
-                                fullResponse.AppendLine();
-                                string content = await response.Content.ReadAsStringAsync();
-                                fullResponse.AppendLine($"Content-Length: {Encoding.UTF8.GetByteCount(content)}");
-                                fullResponse.AppendLine();
-                                fullResponse.Append(content);
 
-                                byte[] responseBytes = Encoding.UTF8.GetBytes(fullResponse.ToString());
-                                await WriteFullMessageAsync(tunnelStream, responseBytes);
+                                byte[] content = await response.Content.ReadAsByteArrayAsync();
+                                headerBuilder.AppendLine($"Content-Length: {content.Length}");
+                                headerBuilder.AppendLine();
+
+                                byte[] headerBytes = Encoding.ASCII.GetBytes(headerBuilder.ToString());
+                                await tunnelStream.WriteAsync(headerBytes, 0, headerBytes.Length);
+                                await tunnelStream.WriteAsync(content, 0, content.Length);
+                                await tunnelStream.FlushAsync();
+
                                 Console.WriteLine($"Sent response for {path}");
-                                Console.WriteLine($"Response:\n{fullResponse}");
+                                Console.WriteLine($"Response headers:\n{headerBuilder}");
+                                Console.WriteLine($"Response body length: {content.Length} bytes");
                             }
-                            catch (HttpRequestException)
+                            catch (HttpRequestException ex)
                             {
+                                Console.WriteLine($"Error forwarding request: {ex.Message}");
                                 string notFoundResponse = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
-                                byte[] responseBytes = Encoding.UTF8.GetBytes(notFoundResponse);
-                                await WriteFullMessageAsync(tunnelStream, responseBytes);
+                                byte[] responseBytes = Encoding.ASCII.GetBytes(notFoundResponse);
+                                await tunnelStream.WriteAsync(responseBytes, 0, responseBytes.Length);
+                                await tunnelStream.FlushAsync();
                                 Console.WriteLine($"Sent 404 response for {path}");
                             }
                         }
@@ -89,7 +98,7 @@ class TunnelClient
     static async Task<byte[]> ReadFullMessageAsync(NetworkStream stream)
     {
         byte[] buffer = new byte[4096];
-        using (var ms = new System.IO.MemoryStream())
+        using (var ms = new MemoryStream())
         {
             while (true)
             {
@@ -100,11 +109,5 @@ class TunnelClient
             }
             return ms.ToArray();
         }
-    }
-
-    static async Task WriteFullMessageAsync(NetworkStream stream, byte[] message)
-    {
-        await stream.WriteAsync(message, 0, message.Length);
-        await stream.FlushAsync();
     }
 }
