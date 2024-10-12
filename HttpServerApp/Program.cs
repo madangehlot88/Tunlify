@@ -93,4 +93,13 @@ class TunnelServer
 
     static async Task CopyStreamAsync(NetworkStream source, NetworkStream destination)
     {
-        byte[] buffer =
+        byte[] buffer = new byte[4096];
+        int bytesRead;
+        do
+        {
+            bytesRead = await source.ReadAsync(buffer, 0, buffer.Length);
+            await destination.WriteAsync(buffer, 0, bytesRead);
+            await destination.FlushAsync();
+        } while (source.DataAvailable);
+    }
+}
