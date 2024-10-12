@@ -145,8 +145,10 @@ class TcpTunnelClient
 
     static async Task HandleHttpMode(SslStream sslStream)
     {
-        using (TcpListener localListener = new TcpListener(System.Net.IPAddress.Any, LocalPort))
+        TcpListener localListener = null;
+        try
         {
+            localListener = new TcpListener(System.Net.IPAddress.Any, LocalPort);
             localListener.Start();
             Console.WriteLine($"HTTP mode: Listening on local port: {LocalPort}");
 
@@ -163,6 +165,25 @@ class TcpTunnelClient
                     await Task.WhenAny(clientToServer, serverToClient);
                 }
             }
+        }
+        catch (SocketException se)
+        {
+            if (se.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            {
+                Console.WriteLine($"Error: Port {LocalPort} is already in use. Please choose a different port.");
+            }
+            else
+            {
+                Console.WriteLine($"SocketException: {se.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in HTTP mode: {ex.Message}");
+        }
+        finally
+        {
+            localListener?.Stop();
         }
     }
 

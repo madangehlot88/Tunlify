@@ -81,7 +81,11 @@ class TcpTunnelServer
             {
                 Console.WriteLine($"New connection from: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
 
-                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
+                // Add a timeout to the client stream
+                client.ReceiveTimeout = 5000; // 5 seconds
+                client.SendTimeout = 5000; // 5 seconds
+
+                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate, null, EncryptionPolicy.RequireEncryption))
                 {
                     var sslServerAuthOptions = new SslServerAuthenticationOptions
                     {
@@ -94,7 +98,9 @@ class TcpTunnelServer
 
                     try
                     {
+                        Console.WriteLine("Starting SSL/TLS handshake...");
                         await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
+                        Console.WriteLine("SSL/TLS handshake completed successfully");
                     }
                     catch (IOException ioEx)
                     {
@@ -107,6 +113,11 @@ class TcpTunnelServer
                             Console.WriteLine($"Received data: {BitConverter.ToString(buffer, 0, bytesRead)}");
                             Console.WriteLine($"As string: {Encoding.ASCII.GetString(buffer, 0, bytesRead)}");
                         }
+                        return;
+                    }
+                    catch (AuthenticationException authEx)
+                    {
+                        Console.WriteLine($"Authentication failed: {authEx.Message}");
                         return;
                     }
 
