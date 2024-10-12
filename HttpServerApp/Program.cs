@@ -62,10 +62,32 @@ class TcpTunnelServer
             {
                 Console.WriteLine($"New connection from: {((IPEndPoint)client.Client.RemoteEndPoint).Address}");
 
-                using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateClientCertificate))
+                // Set a timeout for the client stream
+                client.ReceiveTimeout = 5000; // 5 seconds
+                client.SendTimeout = 5000; // 5 seconds
+
+                NetworkStream rawStream = client.GetStream();
+
+                // Try to peek at the first byte without removing it from the stream
+                if (rawStream.DataAvailable)
+                {
+                    byte[] peek = new byte[1];
+                    rawStream.Read(peek, 0, 1);
+                    rawStream.Seek(-1, SeekOrigin.Current);
+
+                    if (peek[0] != 0x16) // 0x16 is the first byte of an SSL/TLS handshake
+                    {
+                        Console.WriteLine("Non-SSL connection detected. Proceeding with plain connection.");
+                        await HandleHttpMode(rawStream);
+                        return;
+                    }
+                }
+
+                using (SslStream sslStream = new SslStream(rawStream, false, ValidateClientCertificate))
                 {
                     try
                     {
+                        Console.WriteLine("Attempting SSL/TLS handshake...");
                         var sslServerAuthOptions = new SslServerAuthenticationOptions
                         {
                             ServerCertificate = ServerCertificate,
@@ -77,15 +99,20 @@ class TcpTunnelServer
 
                         await sslStream.AuthenticateAsServerAsync(sslServerAuthOptions);
                         Console.WriteLine($"SSL/TLS connection established. Protocol: {sslStream.SslProtocol}");
+                        await HandleHttpMode(sslStream);
                     }
-                    catch (IOException)
+                    catch (IOException ioEx)
                     {
-                        Console.WriteLine("Non-SSL connection detected. Proceeding with plain connection.");
-                        await HandleHttpMode(client.GetStream());
-                        return;
+                        Console.WriteLine($"SSL/TLS handshake failed: {ioEx.Message}");
+                        Console.WriteLine("Attempting to proceed with plain connection.");
+                        await HandleHttpMode(rawStream);
                     }
-
-                    await HandleHttpMode(sslStream);
+                    catch (AuthenticationException authEx)
+                    {
+                        Console.WriteLine($"SSL/TLS authentication failed: {authEx.Message}");
+                        Console.WriteLine("Attempting to proceed with plain connection.");
+                        await HandleHttpMode(rawStream);
+                    }
                 }
             }
             catch (Exception ex)
