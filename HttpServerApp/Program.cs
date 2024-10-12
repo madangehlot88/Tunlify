@@ -56,24 +56,21 @@ class TunnelServer
             using (publicClient)
             using (NetworkStream publicStream = publicClient.GetStream())
             {
-                byte[] buffer = new byte[8192];
-                int bytesRead;
-
                 // Read the request from the public client
-                bytesRead = await publicStream.ReadAsync(buffer, 0, buffer.Length);
-                string request = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                byte[] requestBuffer = await ReadFullMessageAsync(publicStream);
+                string request = Encoding.ASCII.GetString(requestBuffer);
                 Console.WriteLine($"Received request:\n{request}");
 
                 // Forward the request to the tunnel client
-                await tunnelStream.WriteAsync(buffer, 0, bytesRead);
+                await WriteFullMessageAsync(tunnelStream, requestBuffer);
 
                 // Read the response from the tunnel client
-                bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
-                string response = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                byte[] responseBuffer = await ReadFullMessageAsync(tunnelStream);
+                string response = Encoding.ASCII.GetString(responseBuffer);
                 Console.WriteLine($"Received response from local server:\n{response}");
 
                 // Forward the response to the public client
-                await publicStream.WriteAsync(buffer, 0, bytesRead);
+                await WriteFullMessageAsync(publicStream, responseBuffer);
                 Console.WriteLine($"Sent response to client");
             }
         }
@@ -81,5 +78,27 @@ class TunnelServer
         {
             Console.WriteLine($"Error handling request: {ex.Message}");
         }
+    }
+
+    static async Task<byte[]> ReadFullMessageAsync(NetworkStream stream)
+    {
+        byte[] buffer = new byte[4096];
+        using (var ms = new System.IO.MemoryStream())
+        {
+            while (true)
+            {
+                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                if (bytesRead == 0) break;
+                await ms.WriteAsync(buffer, 0, bytesRead);
+                if (bytesRead < buffer.Length) break;
+            }
+            return ms.ToArray();
+        }
+    }
+
+    static async Task WriteFullMessageAsync(NetworkStream stream, byte[] message)
+    {
+        await stream.WriteAsync(message, 0, message.Length);
+        await stream.FlushAsync();
     }
 }
