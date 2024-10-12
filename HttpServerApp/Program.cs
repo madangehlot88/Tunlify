@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Threading.Tasks;
 
 class TunnelServer
@@ -36,8 +37,24 @@ class TunnelServer
         using (NetworkStream publicStream = publicClient.GetStream())
         using (NetworkStream tunnelStream = tunnelClient.GetStream())
         {
-            await tunnelStream.CopyToAsync(publicStream);
-            await publicStream.CopyToAsync(tunnelStream);
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+
+            // Read the request from the public client
+            bytesRead = await publicStream.ReadAsync(buffer, 0, buffer.Length);
+            string request = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+            Console.WriteLine($"Received request:\n{request}");
+
+            // Forward the request to the tunnel client
+            await tunnelStream.WriteAsync(buffer, 0, bytesRead);
+
+            // Read the response from the tunnel client
+            bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
+
+            // Forward the response to the public client
+            await publicStream.WriteAsync(buffer, 0, bytesRead);
+            string response = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+            Console.WriteLine($"Sent response:\n{response}");
         }
     }
 }
