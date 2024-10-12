@@ -39,49 +39,7 @@ class TunnelClient
                             string method = requestParts[0];
                             string path = requestParts[1];
 
-                            try
-                            {
-                                // Forward the request to the local web server
-                                HttpRequestMessage httpRequest = new HttpRequestMessage(new HttpMethod(method), LocalAddress + path);
-                                HttpResponseMessage response = await httpClient.SendAsync(httpRequest);
-
-                                // Construct the full HTTP response
-                                StringBuilder headerBuilder = new StringBuilder();
-                                headerBuilder.AppendLine($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}");
-                                foreach (var header in response.Headers)
-                                {
-                                    headerBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
-                                }
-                                foreach (var header in response.Content.Headers)
-                                {
-                                    if (header.Key.ToLower() != "content-length")
-                                    {
-                                        headerBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
-                                    }
-                                }
-
-                                byte[] content = await response.Content.ReadAsByteArrayAsync();
-                                headerBuilder.AppendLine($"Content-Length: {content.Length}");
-                                headerBuilder.AppendLine();
-
-                                byte[] headerBytes = Encoding.ASCII.GetBytes(headerBuilder.ToString());
-                                await tunnelStream.WriteAsync(headerBytes, 0, headerBytes.Length);
-                                await tunnelStream.WriteAsync(content, 0, content.Length);
-                                await tunnelStream.FlushAsync();
-
-                                Console.WriteLine($"Sent response for {path}");
-                                Console.WriteLine($"Response headers:\n{headerBuilder}");
-                                Console.WriteLine($"Response body length: {content.Length} bytes");
-                            }
-                            catch (HttpRequestException ex)
-                            {
-                                Console.WriteLine($"Error forwarding request: {ex.Message}");
-                                string notFoundResponse = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
-                                byte[] responseBytes = Encoding.ASCII.GetBytes(notFoundResponse);
-                                await tunnelStream.WriteAsync(responseBytes, 0, responseBytes.Length);
-                                await tunnelStream.FlushAsync();
-                                Console.WriteLine($"Sent 404 response for {path}");
-                            }
+                            await ProcessRequestAsync(method, path, tunnelStream);
                         }
                     }
                 }
@@ -95,18 +53,62 @@ class TunnelClient
         }
     }
 
+    static async Task ProcessRequestAsync(string method, string path, NetworkStream tunnelStream)
+    {
+        try
+        {
+            HttpRequestMessage httpRequest = new HttpRequestMessage(new HttpMethod(method), LocalAddress + path);
+            HttpResponseMessage response = await httpClient.SendAsync(httpRequest);
+
+            StringBuilder headerBuilder = new StringBuilder();
+            headerBuilder.AppendLine($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}");
+            foreach (var header in response.Headers)
+            {
+                headerBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+            }
+            foreach (var header in response.Content.Headers)
+            {
+                if (header.Key.ToLower() != "content-length")
+                {
+                    headerBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+                }
+            }
+
+            byte[] content = await response.Content.ReadAsByteArrayAsync();
+            headerBuilder.AppendLine($"Content-Length: {content.Length}");
+            headerBuilder.AppendLine();
+
+            byte[] headerBytes = Encoding.ASCII.GetBytes(headerBuilder.ToString());
+            await tunnelStream.WriteAsync(headerBytes, 0, headerBytes.Length);
+            await tunnelStream.WriteAsync(content, 0, content.Length);
+            await tunnelStream.FlushAsync();
+
+            Console.WriteLine($"Sent response for {path}");
+            Console.WriteLine($"Response headers:\n{headerBuilder}");
+            Console.WriteLine($"Response body length: {content.Length} bytes");
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.WriteLine($"Error forwarding request: {ex.Message}");
+            string notFoundResponse = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+            byte[] responseBytes = Encoding.ASCII.GetBytes(notFoundResponse);
+            await tunnelStream.WriteAsync(responseBytes, 0, responseBytes.Length);
+            await tunnelStream.FlushAsync();
+            Console.WriteLine($"Sent 404 response for {path}");
+        }
+    }
+
     static async Task<byte[]> ReadFullMessageAsync(NetworkStream stream)
     {
         byte[] buffer = new byte[4096];
         using (var ms = new MemoryStream())
         {
-            while (true)
+            int bytesRead;
+            do
             {
-                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                if (bytesRead == 0) break;
+                bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
                 await ms.WriteAsync(buffer, 0, bytesRead);
-                if (bytesRead < buffer.Length) break;
-            }
+            } while (bytesRead == buffer.Length);
             return ms.ToArray();
         }
     }

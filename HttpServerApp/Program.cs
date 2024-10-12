@@ -56,22 +56,13 @@ class TunnelServer
             using (publicClient)
             using (NetworkStream publicStream = publicClient.GetStream())
             {
-                // Read the request from the public client
                 byte[] requestBuffer = await ReadFullMessageAsync(publicStream);
-                string request = Encoding.UTF8.GetString(requestBuffer);
-                Console.WriteLine($"Received request:\n{request}");
+                await tunnelStream.WriteAsync(requestBuffer, 0, requestBuffer.Length);
+                await tunnelStream.FlushAsync();
 
-                // Forward the request to the tunnel client
-                await WriteFullMessageAsync(tunnelStream, requestBuffer);
-
-                // Read the response from the tunnel client
                 byte[] responseBuffer = await ReadFullMessageAsync(tunnelStream);
-                string response = Encoding.UTF8.GetString(responseBuffer);
-                Console.WriteLine($"Received response from local server:\n{response}");
-
-                // Forward the response to the public client
-                await WriteFullMessageAsync(publicStream, responseBuffer);
-                Console.WriteLine($"Sent response to client");
+                await publicStream.WriteAsync(responseBuffer, 0, responseBuffer.Length);
+                await publicStream.FlushAsync();
             }
         }
         catch (Exception ex)
