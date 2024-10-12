@@ -63,27 +63,35 @@ class TunnelServer
                 string request = Encoding.ASCII.GetString(requestBuffer, 0, bytesRead);
                 Console.WriteLine($"Received request:\n{request}");
 
+                // Send request length to tunnel client
+                byte[] requestLengthBytes = BitConverter.GetBytes(bytesRead);
+                await tunnelStream.WriteAsync(requestLengthBytes, 0, 4);
+
                 // Forward request to tunnel client
                 await tunnelStream.WriteAsync(requestBuffer, 0, bytesRead);
                 await tunnelStream.FlushAsync();
 
+                // Read response length from tunnel client
+                byte[] responseLengthBytes = new byte[4];
+                await tunnelStream.ReadAsync(responseLengthBytes, 0, 4);
+                int responseLength = BitConverter.ToInt32(responseLengthBytes, 0);
+
                 // Read response from tunnel client
-                using (MemoryStream ms = new MemoryStream())
+                byte[] responseBuffer = new byte[responseLength];
+                int totalBytesRead = 0;
+                while (totalBytesRead < responseLength)
                 {
-                    byte[] responseBuffer = new byte[4096];
-                    do
-                    {
-                        bytesRead = await tunnelStream.ReadAsync(responseBuffer, 0, responseBuffer.Length);
-                        await ms.WriteAsync(responseBuffer, 0, bytesRead);
-                    } while (tunnelStream.DataAvailable);
-
-                    byte[] fullResponse = ms.ToArray();
-                    Console.WriteLine($"Received response from tunnel client: {fullResponse.Length} bytes");
-
-                    // Forward response to public client
-                    await publicStream.WriteAsync(fullResponse, 0, fullResponse.Length);
-                    await publicStream.FlushAsync();
+                    int bytesRemaining = responseLength - totalBytesRead;
+                    int bytesToRead = Math.Min(bytesRemaining, 4096);
+                    int bytesReadThisTime = await tunnelStream.ReadAsync(responseBuffer, totalBytesRead, bytesToRead);
+                    totalBytesRead += bytesReadThisTime;
                 }
+
+                Console.WriteLine($"Received response from tunnel client: {responseLength} bytes");
+
+                // Forward response to public client
+                await publicStream.WriteAsync(responseBuffer, 0, responseLength);
+                await publicStream.FlushAsync();
             }
         }
         catch (Exception ex)
