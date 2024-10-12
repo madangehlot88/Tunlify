@@ -57,83 +57,39 @@ class TunnelServer
             using (publicClient)
             using (NetworkStream publicStream = publicClient.GetStream())
             {
-                string request = await ReadHttpMessageAsync(publicStream);
+                // Read request from public client
+                byte[] requestBuffer = new byte[4096];
+                int bytesRead = await publicStream.ReadAsync(requestBuffer, 0, requestBuffer.Length);
+                string request = Encoding.ASCII.GetString(requestBuffer, 0, bytesRead);
                 Console.WriteLine($"Received request:\n{request}");
 
-                byte[] requestBytes = Encoding.ASCII.GetBytes(request);
-                await tunnelStream.WriteAsync(requestBytes, 0, requestBytes.Length);
+                // Forward request to tunnel client
+                await tunnelStream.WriteAsync(requestBuffer, 0, bytesRead);
                 await tunnelStream.FlushAsync();
 
-                string response = await ReadHttpMessageAsync(tunnelStream);
-                Console.WriteLine($"Received response from tunnel client:\n{response}");
+                // Read response from tunnel client
+                using (MemoryStream ms = new MemoryStream())
+                {
+                    byte[] responseBuffer = new byte[4096];
+                    do
+                    {
+                        bytesRead = await tunnelStream.ReadAsync(responseBuffer, 0, responseBuffer.Length);
+                        await ms.WriteAsync(responseBuffer, 0, bytesRead);
+                    } while (tunnelStream.DataAvailable);
 
-                byte[] responseBytes = Encoding.ASCII.GetBytes(response);
-                await publicStream.WriteAsync(responseBytes, 0, responseBytes.Length);
-                await publicStream.FlushAsync();
+                    byte[] fullResponse = ms.ToArray();
+                    Console.WriteLine($"Received response from tunnel client: {fullResponse.Length} bytes");
+
+                    // Forward response to public client
+                    await publicStream.WriteAsync(fullResponse, 0, fullResponse.Length);
+                    await publicStream.FlushAsync();
+                }
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error handling request: {ex.Message}");
             Console.WriteLine($"Stack trace: {ex.StackTrace}");
-        }
-    }
-
-    static async Task<string> ReadHttpMessageAsync(NetworkStream stream)
-    {
-        using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
-        {
-            StringBuilder message = new StringBuilder();
-            string line;
-            int contentLength = 0;
-            bool isChunked = false;
-
-            // Read headers
-            while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync()))
-            {
-                message.AppendLine(line);
-                if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (int.TryParse(line.Split(':')[1].Trim(), out int length))
-                    {
-                        contentLength = length;
-                    }
-                }
-                else if (line.StartsWith("Transfer-Encoding: chunked", StringComparison.OrdinalIgnoreCase))
-                {
-                    isChunked = true;
-                }
-            }
-            message.AppendLine(); // Add empty line after headers
-
-            // Read body
-            if (contentLength > 0)
-            {
-                char[] buffer = new char[contentLength];
-                await reader.ReadBlockAsync(buffer, 0, contentLength);
-                message.Append(buffer);
-            }
-            else if (isChunked)
-            {
-                while (true)
-                {
-                    string chunkSizeLine = await reader.ReadLineAsync();
-                    if (!int.TryParse(chunkSizeLine, System.Globalization.NumberStyles.HexNumber, null, out int chunkSize))
-                    {
-                        break;
-                    }
-                    if (chunkSize == 0)
-                    {
-                        break;
-                    }
-                    char[] buffer = new char[chunkSize];
-                    await reader.ReadBlockAsync(buffer, 0, chunkSize);
-                    message.Append(buffer);
-                    await reader.ReadLineAsync(); // Read the CRLF after the chunk
-                }
-            }
-
-            return message.ToString();
         }
     }
 }

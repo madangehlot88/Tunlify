@@ -59,28 +59,39 @@ class TunnelClient
             HttpRequestMessage httpRequest = new HttpRequestMessage(new HttpMethod(method), LocalAddress + path);
             HttpResponseMessage response = await httpClient.SendAsync(httpRequest);
 
-            StringBuilder responseBuilder = new StringBuilder();
-            responseBuilder.AppendLine($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}");
-            foreach (var header in response.Headers)
+            using (MemoryStream ms = new MemoryStream())
             {
-                responseBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+                // Write status line
+                byte[] statusLine = Encoding.ASCII.GetBytes($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}\r\n");
+                ms.Write(statusLine, 0, statusLine.Length);
+
+                // Write headers
+                foreach (var header in response.Headers)
+                {
+                    byte[] headerLine = Encoding.ASCII.GetBytes($"{header.Key}: {string.Join(", ", header.Value)}\r\n");
+                    ms.Write(headerLine, 0, headerLine.Length);
+                }
+                foreach (var header in response.Content.Headers)
+                {
+                    byte[] headerLine = Encoding.ASCII.GetBytes($"{header.Key}: {string.Join(", ", header.Value)}\r\n");
+                    ms.Write(headerLine, 0, headerLine.Length);
+                }
+
+                // Write empty line to separate headers from body
+                ms.Write(new byte[] { (byte)'\r', (byte)'\n' }, 0, 2);
+
+                // Write body
+                byte[] body = await response.Content.ReadAsByteArrayAsync();
+                ms.Write(body, 0, body.Length);
+
+                // Send the complete response
+                byte[] fullResponse = ms.ToArray();
+                await tunnelStream.WriteAsync(fullResponse, 0, fullResponse.Length);
+                await tunnelStream.FlushAsync();
+
+                Console.WriteLine($"Sent response for {path}");
+                Console.WriteLine($"Response length: {fullResponse.Length} bytes");
             }
-            foreach (var header in response.Content.Headers)
-            {
-                responseBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
-            }
-            responseBuilder.AppendLine();
-
-            string content = await response.Content.ReadAsStringAsync();
-            responseBuilder.Append(content);
-
-            string fullResponse = responseBuilder.ToString();
-            byte[] responseBytes = Encoding.UTF8.GetBytes(fullResponse);
-            await tunnelStream.WriteAsync(responseBytes, 0, responseBytes.Length);
-            await tunnelStream.FlushAsync();
-
-            Console.WriteLine($"Sent response for {path}");
-            Console.WriteLine($"Response:\n{fullResponse}");
         }
         catch (HttpRequestException ex)
         {
@@ -99,54 +110,11 @@ class TunnelClient
         {
             StringBuilder message = new StringBuilder();
             string line;
-            int contentLength = 0;
-            bool isChunked = false;
-
-            // Read headers
             while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync()))
             {
                 message.AppendLine(line);
-                if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (int.TryParse(line.Split(':')[1].Trim(), out int length))
-                    {
-                        contentLength = length;
-                    }
-                }
-                else if (line.StartsWith("Transfer-Encoding: chunked", StringComparison.OrdinalIgnoreCase))
-                {
-                    isChunked = true;
-                }
             }
-            message.AppendLine(); // Add empty line after headers
-
-            // Read body
-            if (contentLength > 0)
-            {
-                char[] buffer = new char[contentLength];
-                await reader.ReadBlockAsync(buffer, 0, contentLength);
-                message.Append(buffer);
-            }
-            else if (isChunked)
-            {
-                while (true)
-                {
-                    string chunkSizeLine = await reader.ReadLineAsync();
-                    if (!int.TryParse(chunkSizeLine, System.Globalization.NumberStyles.HexNumber, null, out int chunkSize))
-                    {
-                        break;
-                    }
-                    if (chunkSize == 0)
-                    {
-                        break;
-                    }
-                    char[] buffer = new char[chunkSize];
-                    await reader.ReadBlockAsync(buffer, 0, chunkSize);
-                    message.Append(buffer);
-                    await reader.ReadLineAsync(); // Read the CRLF after the chunk
-                }
-            }
-
+            message.AppendLine(); // Add empty line to signify end of headers
             return message.ToString();
         }
     }
