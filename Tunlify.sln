@@ -32,6 +32,10 @@ EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HttpTunnel", "HttpTunnel\HttpTunnel.csproj", "{A4388C61-FEE1-44BD-A5FD-EB30694992B2}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "http", "http", "{D2D9C422-3A24-40BE-B195-B301C9A54DDD}"
+	ProjectSection(SolutionItems) = preProject
+		client.go = client.go
+		server.go = server.go
+	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HttpClientApp", "HttpClientApp\HttpClientApp.csproj", "{F62CEB01-AC67-4D89-A7CD-60E775BDD75D}"
 EndProject
