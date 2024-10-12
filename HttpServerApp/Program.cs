@@ -2,6 +2,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
+using System.Text;
 
 class TunnelServer
 {
@@ -56,22 +57,30 @@ class TunnelServer
             using (NetworkStream publicStream = publicClient.GetStream())
             {
                 // Read request from public client
-                byte[] buffer = new byte[8192];
-                int bytesRead = await publicStream.ReadAsync(buffer, 0, buffer.Length);
+                string request = await ReadHttpMessageAsync(publicStream);
 
                 // Forward request to tunnel client
-                await tunnelStream.WriteAsync(buffer, 0, bytesRead);
+                byte[] requestBytes = Encoding.ASCII.GetBytes(request);
+                await tunnelStream.WriteAsync(requestBytes, 0, requestBytes.Length);
 
                 // Read response from tunnel client
-                bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
+                string response = await ReadHttpMessageAsync(tunnelStream);
 
                 // Forward response to public client
-                await publicStream.WriteAsync(buffer, 0, bytesRead);
+                byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+                await publicStream.WriteAsync(responseBytes, 0, responseBytes.Length);
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error handling request: {ex.Message}");
         }
+    }
+
+    static async Task<string> ReadHttpMessageAsync(NetworkStream stream)
+    {
+        byte[] buffer = new byte[8192];
+        int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+        return Encoding.ASCII.GetString(buffer, 0, bytesRead);
     }
 }

@@ -2,6 +2,7 @@
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Threading.Tasks;
+using System.Text;
 
 class TunnelClient
 {
@@ -43,25 +44,46 @@ class TunnelClient
     static async Task ProxyRequest(NetworkStream tunnelStream)
     {
         // Read the request from the tunnel
-        byte[] buffer = new byte[8192];
-        int bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
-        if (bytesRead == 0) return; // Connection closed
+        string request = await ReadHttpMessageAsync(tunnelStream);
+        if (string.IsNullOrEmpty(request)) return; // Connection closed
 
-        string request = System.Text.Encoding.ASCII.GetString(buffer, 0, bytesRead);
         Console.WriteLine($"Received request:\n{request}");
 
         // Extract the path from the request
         string[] requestLines = request.Split('\n');
         string[] requestParts = requestLines[0].Split(' ');
+        string method = requestParts[0];
         string path = requestParts[1];
 
         // Forward the request to the local server
-        HttpResponseMessage response = await httpClient.GetAsync(LocalAddress + path);
+        HttpRequestMessage httpRequest = new HttpRequestMessage(new HttpMethod(method), LocalAddress + path);
+        HttpResponseMessage response = await httpClient.SendAsync(httpRequest);
+
+        // Construct the response
+        StringBuilder responseBuilder = new StringBuilder();
+        responseBuilder.AppendLine($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}");
+        foreach (var header in response.Headers)
+        {
+            responseBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+        }
+        foreach (var header in response.Content.Headers)
+        {
+            responseBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+        }
+        responseBuilder.AppendLine();
+        responseBuilder.Append(await response.Content.ReadAsStringAsync());
 
         // Send the response back through the tunnel
-        byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
+        byte[] responseBytes = Encoding.UTF8.GetBytes(responseBuilder.ToString());
         await tunnelStream.WriteAsync(responseBytes, 0, responseBytes.Length);
 
         Console.WriteLine($"Proxied request for {path}");
+    }
+
+    static async Task<string> ReadHttpMessageAsync(NetworkStream stream)
+    {
+        byte[] buffer = new byte[8192];
+        int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+        return Encoding.ASCII.GetString(buffer, 0, bytesRead);
     }
 }
