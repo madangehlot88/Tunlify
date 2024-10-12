@@ -9,15 +9,14 @@ class TcpTunnelClient
 {
     private static string ServerAddress;
     private static int ServerPort;
-    private static int LocalPort = 8080;
-    private static bool UseHttp = false;
+    private static int LocalPort = 5000; // Your local web server port
     private static X509Certificate2 ClientCertificate;
 
     static async Task Main(string[] args)
     {
         if (args.Length < 2)
         {
-            Console.WriteLine("Usage: dotnet run <ServerAddress> <ServerPort> [--http] [--local-port <Port>] [--cert <path> <password>]");
+            Console.WriteLine("Usage: dotnet run <ServerAddress> <ServerPort> [--local-port <Port>] [--cert <path> <password>]");
             return;
         }
 
@@ -32,10 +31,6 @@ class TcpTunnelClient
         {
             switch (args[i])
             {
-                case "--http":
-                    UseHttp = true;
-                    Console.WriteLine("HTTP mode enabled");
-                    break;
                 case "--local-port":
                     if (i + 1 < args.Length && int.TryParse(args[++i], out int port))
                     {
@@ -67,14 +62,16 @@ class TcpTunnelClient
 
     static async Task ConnectToServer()
     {
-        using (TcpClient client = new TcpClient(ServerAddress, ServerPort))
+        using (TcpClient client = new TcpClient())
         {
+            await client.ConnectAsync(ServerAddress, ServerPort);
             Console.WriteLine($"Connected to server: {ServerAddress}:{ServerPort}");
 
             using (SslStream sslStream = new SslStream(client.GetStream(), false, ValidateServerCertificate, null))
             {
                 try
                 {
+                    Console.WriteLine("Starting SSL/TLS handshake...");
                     var sslClientAuthOptions = new SslClientAuthenticationOptions
                     {
                         TargetHost = ServerAddress,
@@ -88,56 +85,12 @@ class TcpTunnelClient
                     Console.WriteLine("SSL/TLS handshake completed");
                     Console.WriteLine($"SSL/TLS version: {sslStream.SslProtocol}");
 
-                    if (!UseHttp)
-                    {
-                        await HandleOriginalProtocol(sslStream);
-                    }
-                    else
-                    {
-                        await HandleHttpMode(sslStream);
-                    }
+                    await HandleHttpMode(sslStream);
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"SSL/TLS error: {ex.Message}");
-                }
-            }
-        }
-    }
-
-    static async Task HandleOriginalProtocol(SslStream sslStream)
-    {
-        byte[] key = new byte[] { 0x00, 0x08, 0x00, 0x00, 0x00, 0x22, 0x4D, 0x00, 0x00, 0x00 };
-        await sslStream.WriteAsync(key, 0, key.Length);
-
-        byte[] response = new byte[20];
-        await sslStream.ReadAsync(response, 0, response.Length);
-
-        int tunnelPort = BitConverter.ToInt32(response, 16);
-        Console.WriteLine($"Received tunnel port: {tunnelPort}");
-
-        using (TcpClient tunnelClient = new TcpClient(ServerAddress, tunnelPort))
-        using (NetworkStream tunnelStream = tunnelClient.GetStream())
-        {
-            Console.WriteLine($"Connected to tunnel port: {tunnelPort}");
-
-            using (TcpListener localListener = new TcpListener(System.Net.IPAddress.Any, LocalPort))
-            {
-                localListener.Start();
-                Console.WriteLine($"Listening on local port: {LocalPort}");
-
-                while (true)
-                {
-                    using (TcpClient localClient = await localListener.AcceptTcpClientAsync())
-                    using (NetworkStream localStream = localClient.GetStream())
-                    {
-                        Console.WriteLine("Local connection accepted. Forwarding data...");
-
-                        Task clientToTunnel = ForwardDataAsync(localStream, tunnelStream, "Local -> Tunnel");
-                        Task tunnelToClient = ForwardDataAsync(tunnelStream, localStream, "Tunnel -> Local");
-
-                        await Task.WhenAny(clientToTunnel, tunnelToClient);
-                    }
+                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
                 }
             }
         }
@@ -145,45 +98,22 @@ class TcpTunnelClient
 
     static async Task HandleHttpMode(SslStream sslStream)
     {
-        TcpListener localListener = null;
         try
         {
-            localListener = new TcpListener(System.Net.IPAddress.Any, LocalPort);
-            localListener.Start();
-            Console.WriteLine($"HTTP mode: Listening on local port: {LocalPort}");
-
-            while (true)
+            using (TcpClient localClient = new TcpClient("localhost", LocalPort))
+            using (NetworkStream localStream = localClient.GetStream())
             {
-                using (TcpClient localClient = await localListener.AcceptTcpClientAsync())
-                using (NetworkStream localStream = localClient.GetStream())
-                {
-                    Console.WriteLine("Local HTTP connection accepted. Forwarding data...");
+                Console.WriteLine($"Connected to local web server on port {LocalPort}");
 
-                    Task clientToServer = ForwardDataAsync(localStream, sslStream, "Local -> Server");
-                    Task serverToClient = ForwardDataAsync(sslStream, localStream, "Server -> Local");
+                Task serverToLocal = ForwardDataAsync(sslStream, localStream, "Server -> Local");
+                Task localToServer = ForwardDataAsync(localStream, sslStream, "Local -> Server");
 
-                    await Task.WhenAny(clientToServer, serverToClient);
-                }
-            }
-        }
-        catch (SocketException se)
-        {
-            if (se.SocketErrorCode == SocketError.AddressAlreadyInUse)
-            {
-                Console.WriteLine($"Error: Port {LocalPort} is already in use. Please choose a different port.");
-            }
-            else
-            {
-                Console.WriteLine($"SocketException: {se.Message}");
+                await Task.WhenAny(serverToLocal, localToServer);
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error in HTTP mode: {ex.Message}");
-        }
-        finally
-        {
-            localListener?.Stop();
         }
     }
 
@@ -212,8 +142,7 @@ class TcpTunnelClient
 
         Console.WriteLine($"Certificate error: {sslPolicyErrors}");
 
-        // You may want to add additional certificate validation logic here
-        // For now, we'll accept the certificate despite errors (not recommended for production)
+        // For testing purposes, accept any certificate
         return true;
     }
 }
