@@ -50,11 +50,16 @@ class TunnelServer
 
             // Read the response from the tunnel client
             bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
-
-            // Forward the response to the public client
-            await publicStream.WriteAsync(buffer, 0, bytesRead);
             string response = Encoding.ASCII.GetString(buffer, 0, bytesRead);
-            Console.WriteLine($"Sent response:\n{response}");
+            Console.WriteLine($"Received response from local server:\n{response}");
+
+            // Format the HTTP response
+            string formattedResponse = $"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {response.Length}\r\n\r\n{response}";
+            byte[] responseBytes = Encoding.ASCII.GetBytes(formattedResponse);
+
+            // Forward the formatted response to the public client
+            await publicStream.WriteAsync(responseBytes, 0, responseBytes.Length);
+            Console.WriteLine($"Sent formatted response to client:\n{formattedResponse}");
         }
     }
 }
