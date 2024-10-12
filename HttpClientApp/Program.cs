@@ -65,22 +65,22 @@ class TunnelClient
         {
             // Write status line
             byte[] statusLine = Encoding.ASCII.GetBytes($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}\r\n");
-            ms.Write(statusLine, 0, statusLine.Length);
+            await ms.WriteAsync(statusLine, 0, statusLine.Length);
 
             // Write headers
             foreach (var header in response.Headers)
             {
                 byte[] headerLine = Encoding.ASCII.GetBytes($"{header.Key}: {string.Join(", ", header.Value)}\r\n");
-                ms.Write(headerLine, 0, headerLine.Length);
+                await ms.WriteAsync(headerLine, 0, headerLine.Length);
             }
             foreach (var header in response.Content.Headers)
             {
                 byte[] headerLine = Encoding.ASCII.GetBytes($"{header.Key}: {string.Join(", ", header.Value)}\r\n");
-                ms.Write(headerLine, 0, headerLine.Length);
+                await ms.WriteAsync(headerLine, 0, headerLine.Length);
             }
 
             // Write empty line to separate headers from body
-            ms.Write(new byte[] { (byte)'\r', (byte)'\n' }, 0, 2);
+            await ms.WriteAsync(new byte[] { (byte)'\r', (byte)'\n' }, 0, 2);
 
             // Write body
             await response.Content.CopyToAsync(ms);
@@ -103,8 +103,8 @@ class TunnelClient
             do
             {
                 bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                ms.Write(buffer, 0, bytesRead);
-            } while (bytesRead == buffer.Length);
+                await ms.WriteAsync(buffer, 0, bytesRead);
+            } while (stream.DataAvailable);
 
             return Encoding.ASCII.GetString(ms.ToArray());
         }

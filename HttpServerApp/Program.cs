@@ -84,8 +84,8 @@ class TunnelServer
             do
             {
                 bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                ms.Write(buffer, 0, bytesRead);
-            } while (bytesRead == buffer.Length);
+                await ms.WriteAsync(buffer, 0, bytesRead);
+            } while (stream.DataAvailable);
 
             return Encoding.ASCII.GetString(ms.ToArray());
         }
@@ -93,13 +93,4 @@ class TunnelServer
 
     static async Task CopyStreamAsync(NetworkStream source, NetworkStream destination)
     {
-        byte[] buffer = new byte[4096];
-        int bytesRead;
-        do
-        {
-            bytesRead = await source.ReadAsync(buffer, 0, buffer.Length);
-            await destination.WriteAsync(buffer, 0, bytesRead);
-        } while (bytesRead > 0);
-        await destination.FlushAsync();
-    }
-}
+        byte[] buffer =
