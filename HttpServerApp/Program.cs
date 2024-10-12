@@ -58,7 +58,7 @@ class TunnelServer
             {
                 // Read the request from the public client
                 byte[] requestBuffer = await ReadFullMessageAsync(publicStream);
-                string request = Encoding.ASCII.GetString(requestBuffer);
+                string request = Encoding.UTF8.GetString(requestBuffer);
                 Console.WriteLine($"Received request:\n{request}");
 
                 // Forward the request to the tunnel client
@@ -66,7 +66,7 @@ class TunnelServer
 
                 // Read the response from the tunnel client
                 byte[] responseBuffer = await ReadFullMessageAsync(tunnelStream);
-                string response = Encoding.ASCII.GetString(responseBuffer);
+                string response = Encoding.UTF8.GetString(responseBuffer);
                 Console.WriteLine($"Received response from local server:\n{response}");
 
                 // Forward the response to the public client

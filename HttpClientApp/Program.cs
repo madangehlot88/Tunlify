@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Net.Http;
-using System.Net.Mail;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
@@ -8,7 +7,7 @@ using System.Threading.Tasks;
 class TunnelClient
 {
     static readonly string LocalAddress = "http://localhost:5000"; // Your local web server address
-    static readonly HttpClient httpClient = new HttpClient() { Timeout = TimeSpan.FromSeconds(5) };
+    static readonly HttpClient httpClient = new HttpClient() { Timeout = TimeSpan.FromSeconds(10) };
 
     static async Task Main(string[] args)
     {
@@ -57,17 +56,20 @@ class TunnelClient
                                     fullResponse.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
                                 }
                                 fullResponse.AppendLine();
-                                fullResponse.Append(await response.Content.ReadAsStringAsync());
+                                string content = await response.Content.ReadAsStringAsync();
+                                fullResponse.AppendLine($"Content-Length: {Encoding.UTF8.GetByteCount(content)}");
+                                fullResponse.AppendLine();
+                                fullResponse.Append(content);
 
-                                byte[] responseBytes = Encoding.ASCII.GetBytes(fullResponse.ToString());
+                                byte[] responseBytes = Encoding.UTF8.GetBytes(fullResponse.ToString());
                                 await WriteFullMessageAsync(tunnelStream, responseBytes);
                                 Console.WriteLine($"Sent response for {path}");
+                                Console.WriteLine($"Response:\n{fullResponse}");
                             }
                             catch (HttpRequestException)
                             {
-                                // If the local server doesn't respond or returns an error, send a 404 Not Found
                                 string notFoundResponse = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
-                                byte[] responseBytes = Encoding.ASCII.GetBytes(notFoundResponse);
+                                byte[] responseBytes = Encoding.UTF8.GetBytes(notFoundResponse);
                                 await WriteFullMessageAsync(tunnelStream, responseBytes);
                                 Console.WriteLine($"Sent 404 response for {path}");
                             }
