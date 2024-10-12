@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Text;
+using System.IO;
 
 class TunnelServer
 {
@@ -62,13 +63,10 @@ class TunnelServer
                 // Forward request to tunnel client
                 byte[] requestBytes = Encoding.ASCII.GetBytes(request);
                 await tunnelStream.WriteAsync(requestBytes, 0, requestBytes.Length);
+                await tunnelStream.FlushAsync();
 
-                // Read response from tunnel client
-                string response = await ReadHttpMessageAsync(tunnelStream);
-
-                // Forward response to public client
-                byte[] responseBytes = Encoding.UTF8.GetBytes(response);
-                await publicStream.WriteAsync(responseBytes, 0, responseBytes.Length);
+                // Read response from tunnel client and forward to public client
+                await CopyStreamAsync(tunnelStream, publicStream);
             }
         }
         catch (Exception ex)
@@ -79,8 +77,29 @@ class TunnelServer
 
     static async Task<string> ReadHttpMessageAsync(NetworkStream stream)
     {
-        byte[] buffer = new byte[8192];
-        int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-        return Encoding.ASCII.GetString(buffer, 0, bytesRead);
+        using (MemoryStream ms = new MemoryStream())
+        {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            do
+            {
+                bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                ms.Write(buffer, 0, bytesRead);
+            } while (bytesRead == buffer.Length);
+
+            return Encoding.ASCII.GetString(ms.ToArray());
+        }
+    }
+
+    static async Task CopyStreamAsync(NetworkStream source, NetworkStream destination)
+    {
+        byte[] buffer = new byte[4096];
+        int bytesRead;
+        do
+        {
+            bytesRead = await source.ReadAsync(buffer, 0, buffer.Length);
+            await destination.WriteAsync(buffer, 0, bytesRead);
+        } while (bytesRead > 0);
+        await destination.FlushAsync();
     }
 }

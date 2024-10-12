@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Text;
+using System.IO;
 
 class TunnelClient
 {
@@ -59,31 +60,53 @@ class TunnelClient
         HttpRequestMessage httpRequest = new HttpRequestMessage(new HttpMethod(method), LocalAddress + path);
         HttpResponseMessage response = await httpClient.SendAsync(httpRequest);
 
-        // Construct the response
-        StringBuilder responseBuilder = new StringBuilder();
-        responseBuilder.AppendLine($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}");
-        foreach (var header in response.Headers)
-        {
-            responseBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
-        }
-        foreach (var header in response.Content.Headers)
-        {
-            responseBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
-        }
-        responseBuilder.AppendLine();
-        responseBuilder.Append(await response.Content.ReadAsStringAsync());
-
         // Send the response back through the tunnel
-        byte[] responseBytes = Encoding.UTF8.GetBytes(responseBuilder.ToString());
-        await tunnelStream.WriteAsync(responseBytes, 0, responseBytes.Length);
+        using (MemoryStream ms = new MemoryStream())
+        {
+            // Write status line
+            byte[] statusLine = Encoding.ASCII.GetBytes($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}\r\n");
+            ms.Write(statusLine, 0, statusLine.Length);
+
+            // Write headers
+            foreach (var header in response.Headers)
+            {
+                byte[] headerLine = Encoding.ASCII.GetBytes($"{header.Key}: {string.Join(", ", header.Value)}\r\n");
+                ms.Write(headerLine, 0, headerLine.Length);
+            }
+            foreach (var header in response.Content.Headers)
+            {
+                byte[] headerLine = Encoding.ASCII.GetBytes($"{header.Key}: {string.Join(", ", header.Value)}\r\n");
+                ms.Write(headerLine, 0, headerLine.Length);
+            }
+
+            // Write empty line to separate headers from body
+            ms.Write(new byte[] { (byte)'\r', (byte)'\n' }, 0, 2);
+
+            // Write body
+            await response.Content.CopyToAsync(ms);
+
+            // Send the complete response
+            ms.Position = 0;
+            await ms.CopyToAsync(tunnelStream);
+            await tunnelStream.FlushAsync();
+        }
 
         Console.WriteLine($"Proxied request for {path}");
     }
 
     static async Task<string> ReadHttpMessageAsync(NetworkStream stream)
     {
-        byte[] buffer = new byte[8192];
-        int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-        return Encoding.ASCII.GetString(buffer, 0, bytesRead);
+        using (MemoryStream ms = new MemoryStream())
+        {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            do
+            {
+                bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                ms.Write(buffer, 0, bytesRead);
+            } while (bytesRead == buffer.Length);
+
+            return Encoding.ASCII.GetString(ms.ToArray());
+        }
     }
 }
