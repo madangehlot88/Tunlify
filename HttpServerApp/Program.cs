@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -176,12 +176,14 @@ class TcpTunnelServer
         {
             Console.WriteLine("Handling HTTP mode connection...");
 
-            // In this case, we're not connecting to a local service on the server.
-            // Instead, we're just relaying data back and forth.
-            Task clientToServer = ForwardDataAsync(sslStream, sslStream, "Client -> Server", false);
-            Task serverToClient = ForwardDataAsync(sslStream, sslStream, "Server -> Client", false);
+            using (TcpClient localClient = new TcpClient("localhost", LocalPort))
+            using (NetworkStream localStream = localClient.GetStream())
+            {
+                Task clientToServer = ForwardDataAsync(sslStream, localStream, "Client -> Server", true);
+                Task serverToClient = ForwardDataAsync(localStream, sslStream, "Server -> Client", false);
 
-            await Task.WhenAny(clientToServer, serverToClient);
+                await Task.WhenAny(clientToServer, serverToClient);
+            }
         }
         catch (Exception ex)
         {
@@ -195,17 +197,51 @@ class TcpTunnelServer
         byte[] buffer = new byte[4096];
         try
         {
-            int bytesRead;
-            while ((bytesRead = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            while (true)
             {
+                int bytesRead = await source.ReadAsync(buffer, 0, buffer.Length);
+                if (bytesRead == 0) break;
+
+                if (modifyHeaders && direction == "Client -> Server")
+                {
+                    string request = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                    string modifiedRequest = ModifyHttpRequest(request);
+                    buffer = Encoding.ASCII.GetBytes(modifiedRequest);
+                    bytesRead = buffer.Length;
+                }
+
                 await destination.WriteAsync(buffer, 0, bytesRead);
                 Console.WriteLine($"{direction}: Forwarded {bytesRead} bytes");
             }
         }
         catch (IOException)
-        { 
+        {
             Console.WriteLine($"{direction}: Connection closed");
         }
+    }
+
+    static string ModifyHttpRequest(string request)
+    {
+        // Split the request into lines
+        string[] lines = request.Split(new[] { "\r\n" }, StringSplitOptions.None);
+
+        // Modify the Host header
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].StartsWith("Host:", StringComparison.OrdinalIgnoreCase))
+            {
+                lines[i] = $"Host: localhost:{LocalPort}";
+                break;
+            }
+        }
+
+        // Add X-Forwarded headers
+        List<string> newLines = new List<string>(lines);
+        newLines.Insert(1, $"X-Forwarded-Host: {ServerPort}");
+        newLines.Insert(2, $"X-Forwarded-Proto: https");
+
+        // Reconstruct the request
+        return string.Join("\r\n", newLines);
     }
 
     static bool VerifyKey(byte[] key)
@@ -213,6 +249,7 @@ class TcpTunnelServer
         byte[] expectedKey = new byte[] { 0x00, 0x08, 0x00, 0x00, 0x00, 0x22, 0x4D, 0x00, 0x00, 0x00 };
         return key.AsSpan().SequenceEqual(expectedKey);
     }
+
     private static bool ValidateClientCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
     {
         if (UseHttp)

@@ -29,7 +29,13 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		ssl_tunnel_http_v5.go = ssl_tunnel_http_v5.go
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HttpTunnel", "HttpTunnel\HttpTunnel.csproj", "{A4388C61-FEE1-44BD-A5FD-EB30694992B2}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HttpTunnel", "HttpTunnel\HttpTunnel.csproj", "{A4388C61-FEE1-44BD-A5FD-EB30694992B2}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "http", "http", "{D2D9C422-3A24-40BE-B195-B301C9A54DDD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HttpClientApp", "HttpClientApp\HttpClientApp.csproj", "{F62CEB01-AC67-4D89-A7CD-60E775BDD75D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HttpServerApp", "HttpServerApp\HttpServerApp.csproj", "{3A1AC871-840B-4EC9-A815-ABD1FE727B00}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -69,9 +75,21 @@ Global
 		{A4388C61-FEE1-44BD-A5FD-EB30694992B2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A4388C61-FEE1-44BD-A5FD-EB30694992B2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A4388C61-FEE1-44BD-A5FD-EB30694992B2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F62CEB01-AC67-4D89-A7CD-60E775BDD75D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F62CEB01-AC67-4D89-A7CD-60E775BDD75D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F62CEB01-AC67-4D89-A7CD-60E775BDD75D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F62CEB01-AC67-4D89-A7CD-60E775BDD75D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3A1AC871-840B-4EC9-A815-ABD1FE727B00}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3A1AC871-840B-4EC9-A815-ABD1FE727B00}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3A1AC871-840B-4EC9-A815-ABD1FE727B00}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3A1AC871-840B-4EC9-A815-ABD1FE727B00}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{F62CEB01-AC67-4D89-A7CD-60E775BDD75D} = {D2D9C422-3A24-40BE-B195-B301C9A54DDD}
+		{3A1AC871-840B-4EC9-A815-ABD1FE727B00} = {D2D9C422-3A24-40BE-B195-B301C9A54DDD}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {AC19A97A-CDEB-4348-99E5-A10967E382E7}
