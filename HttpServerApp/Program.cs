@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
+using System.IO;
 
 class TunnelServer
 {
@@ -39,7 +40,7 @@ class TunnelServer
                 while (true)
                 {
                     TcpClient publicClient = await publicListener.AcceptTcpClientAsync();
-                    _ = HandleRequestAsync(publicClient, tunnelStream);
+                    await HandleRequestAsync(publicClient, tunnelStream);
                 }
             }
         }
@@ -56,12 +57,18 @@ class TunnelServer
             using (publicClient)
             using (NetworkStream publicStream = publicClient.GetStream())
             {
-                byte[] requestBuffer = await ReadFullMessageAsync(publicStream);
-                await tunnelStream.WriteAsync(requestBuffer, 0, requestBuffer.Length);
+                string request = await ReadHttpMessageAsync(publicStream);
+                Console.WriteLine($"Received request:\n{request}");
+
+                byte[] requestBytes = Encoding.ASCII.GetBytes(request);
+                await tunnelStream.WriteAsync(requestBytes, 0, requestBytes.Length);
                 await tunnelStream.FlushAsync();
 
-                byte[] responseBuffer = await ReadFullMessageAsync(tunnelStream);
-                await publicStream.WriteAsync(responseBuffer, 0, responseBuffer.Length);
+                string response = await ReadHttpMessageAsync(tunnelStream);
+                Console.WriteLine($"Received response from tunnel client:\n{response}");
+
+                byte[] responseBytes = Encoding.ASCII.GetBytes(response);
+                await publicStream.WriteAsync(responseBytes, 0, responseBytes.Length);
                 await publicStream.FlushAsync();
             }
         }
@@ -71,25 +78,27 @@ class TunnelServer
         }
     }
 
-    static async Task<byte[]> ReadFullMessageAsync(NetworkStream stream)
+    static async Task<string> ReadHttpMessageAsync(NetworkStream stream)
     {
-        byte[] buffer = new byte[4096];
-        using (var ms = new System.IO.MemoryStream())
+        using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
         {
-            while (true)
+            StringBuilder message = new StringBuilder();
+            string line;
+            while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync()))
             {
-                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                if (bytesRead == 0) break;
-                await ms.WriteAsync(buffer, 0, bytesRead);
-                if (bytesRead < buffer.Length) break;
+                message.AppendLine(line);
             }
-            return ms.ToArray();
-        }
-    }
 
-    static async Task WriteFullMessageAsync(NetworkStream stream, byte[] message)
-    {
-        await stream.WriteAsync(message, 0, message.Length);
-        await stream.FlushAsync();
+            // Read the message body if Content-Length is present
+            string headers = message.ToString();
+            string contentLengthHeader = headers.Split(new[] { "Content-Length: " }, StringSplitOptions.None)[1];
+            int contentLength = int.Parse(contentLengthHeader.Split('\r')[0]);
+
+            char[] buffer = new char[contentLength];
+            await reader.ReadBlockAsync(buffer, 0, contentLength);
+            message.Append(buffer);
+
+            return message.ToString();
+        }
     }
 }

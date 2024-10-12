@@ -28,10 +28,9 @@ class TunnelClient
                     {
                         while (true)
                         {
-                            byte[] requestBuffer = await ReadFullMessageAsync(tunnelStream);
-                            if (requestBuffer.Length == 0) break; // Connection closed
+                            string request = await ReadHttpMessageAsync(tunnelStream);
+                            if (string.IsNullOrEmpty(request)) break; // Connection closed
 
-                            string request = Encoding.ASCII.GetString(requestBuffer);
                             Console.WriteLine($"Received request:\n{request}");
 
                             string[] requestLines = request.Split('\n');
@@ -60,32 +59,28 @@ class TunnelClient
             HttpRequestMessage httpRequest = new HttpRequestMessage(new HttpMethod(method), LocalAddress + path);
             HttpResponseMessage response = await httpClient.SendAsync(httpRequest);
 
-            StringBuilder headerBuilder = new StringBuilder();
-            headerBuilder.AppendLine($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}");
+            StringBuilder responseBuilder = new StringBuilder();
+            responseBuilder.AppendLine($"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}");
             foreach (var header in response.Headers)
             {
-                headerBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+                responseBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
             }
             foreach (var header in response.Content.Headers)
             {
-                if (header.Key.ToLower() != "content-length")
-                {
-                    headerBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
-                }
+                responseBuilder.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
             }
+            responseBuilder.AppendLine();
 
-            byte[] content = await response.Content.ReadAsByteArrayAsync();
-            headerBuilder.AppendLine($"Content-Length: {content.Length}");
-            headerBuilder.AppendLine();
+            string content = await response.Content.ReadAsStringAsync();
+            responseBuilder.Append(content);
 
-            byte[] headerBytes = Encoding.ASCII.GetBytes(headerBuilder.ToString());
-            await tunnelStream.WriteAsync(headerBytes, 0, headerBytes.Length);
-            await tunnelStream.WriteAsync(content, 0, content.Length);
+            string fullResponse = responseBuilder.ToString();
+            byte[] responseBytes = Encoding.UTF8.GetBytes(fullResponse);
+            await tunnelStream.WriteAsync(responseBytes, 0, responseBytes.Length);
             await tunnelStream.FlushAsync();
 
             Console.WriteLine($"Sent response for {path}");
-            Console.WriteLine($"Response headers:\n{headerBuilder}");
-            Console.WriteLine($"Response body length: {content.Length} bytes");
+            Console.WriteLine($"Response:\n{fullResponse}");
         }
         catch (HttpRequestException ex)
         {
@@ -98,18 +93,17 @@ class TunnelClient
         }
     }
 
-    static async Task<byte[]> ReadFullMessageAsync(NetworkStream stream)
+    static async Task<string> ReadHttpMessageAsync(NetworkStream stream)
     {
-        byte[] buffer = new byte[4096];
-        using (var ms = new MemoryStream())
+        using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
         {
-            int bytesRead;
-            do
+            StringBuilder message = new StringBuilder();
+            string line;
+            while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync()))
             {
-                bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                await ms.WriteAsync(buffer, 0, bytesRead);
-            } while (bytesRead == buffer.Length);
-            return ms.ToArray();
+                message.AppendLine(line);
+            }
+            return message.ToString();
         }
     }
 }
