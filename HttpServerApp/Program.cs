@@ -20,46 +20,66 @@ class TunnelServer
         Console.WriteLine($"Server listening for public requests on port {port}");
         Console.WriteLine($"Server listening for tunnel connections on port {tunnelPort}");
 
-        // Wait for a tunnel connection
-        TcpClient tunnelClient = await tunnelListener.AcceptTcpClientAsync();
-        Console.WriteLine("Tunnel client connected");
-
         while (true)
         {
-            TcpClient publicClient = await publicListener.AcceptTcpClientAsync();
-            _ = HandleRequestAsync(publicClient, tunnelClient);
+            TcpClient tunnelClient = await tunnelListener.AcceptTcpClientAsync();
+            Console.WriteLine("Tunnel client connected");
+
+            _ = HandleTunnelClientAsync(tunnelClient, publicListener);
         }
     }
 
-    static async Task HandleRequestAsync(TcpClient publicClient, TcpClient tunnelClient)
+    static async Task HandleTunnelClientAsync(TcpClient tunnelClient, TcpListener publicListener)
     {
-        using (publicClient)
-        using (NetworkStream publicStream = publicClient.GetStream())
-        using (NetworkStream tunnelStream = tunnelClient.GetStream())
+        try
         {
-            byte[] buffer = new byte[4096];
-            int bytesRead;
+            using (tunnelClient)
+            using (NetworkStream tunnelStream = tunnelClient.GetStream())
+            {
+                while (true)
+                {
+                    TcpClient publicClient = await publicListener.AcceptTcpClientAsync();
+                    _ = HandleRequestAsync(publicClient, tunnelStream);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Tunnel client disconnected: {ex.Message}");
+        }
+    }
 
-            // Read the request from the public client
-            bytesRead = await publicStream.ReadAsync(buffer, 0, buffer.Length);
-            string request = Encoding.ASCII.GetString(buffer, 0, bytesRead);
-            Console.WriteLine($"Received request:\n{request}");
+    static async Task HandleRequestAsync(TcpClient publicClient, NetworkStream tunnelStream)
+    {
+        try
+        {
+            using (publicClient)
+            using (NetworkStream publicStream = publicClient.GetStream())
+            {
+                byte[] buffer = new byte[8192];
+                int bytesRead;
 
-            // Forward the request to the tunnel client
-            await tunnelStream.WriteAsync(buffer, 0, bytesRead);
+                // Read the request from the public client
+                bytesRead = await publicStream.ReadAsync(buffer, 0, buffer.Length);
+                string request = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                Console.WriteLine($"Received request:\n{request}");
 
-            // Read the response from the tunnel client
-            bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
-            string response = Encoding.ASCII.GetString(buffer, 0, bytesRead);
-            Console.WriteLine($"Received response from local server:\n{response}");
+                // Forward the request to the tunnel client
+                await tunnelStream.WriteAsync(buffer, 0, bytesRead);
 
-            // Format the HTTP response
-            string formattedResponse = $"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {response.Length}\r\n\r\n{response}";
-            byte[] responseBytes = Encoding.ASCII.GetBytes(formattedResponse);
+                // Read the response from the tunnel client
+                bytesRead = await tunnelStream.ReadAsync(buffer, 0, buffer.Length);
+                string response = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                Console.WriteLine($"Received response from local server:\n{response}");
 
-            // Forward the formatted response to the public client
-            await publicStream.WriteAsync(responseBytes, 0, responseBytes.Length);
-            Console.WriteLine($"Sent formatted response to client:\n{formattedResponse}");
+                // Forward the response to the public client
+                await publicStream.WriteAsync(buffer, 0, bytesRead);
+                Console.WriteLine($"Sent response to client");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error handling request: {ex.Message}");
         }
     }
 }
